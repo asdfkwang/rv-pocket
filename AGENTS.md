@@ -11,3 +11,12 @@
 - Prefer reusable chapter data over duplicated chapter-specific UI.
 - Keep chapter state and view state separate.
 - Rust/WASM may be added later only when needed.
+
+## Local build & verify (Bun)
+
+- Install: `bun install`
+- Dev server: `bun run dev` (serves `index.html`), open the printed localhost URL
+- Typecheck: `bun run typecheck`
+- Production build: `bun run build` (outputs gitignored `dist/`)
+- Tests: `bun test`
+- Commit only source (`src/`, `index.html`, `package.json`, `bun.lock`, configs); never commit `node_modules/` or `dist/`
