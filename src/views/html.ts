@@ -5,4 +5,4 @@ export function escapeHtml(value: string | number): string {
   })[character]!);
 }
 
-export const viewLabels = { workbench: "Workbench", computer: "Computer", manual: "Manual" } as const;
+export const viewLabels = { workbench: "Hub", computer: "PC", manual: "Book", pocket: "Pocket" } as const;

@@ -26,7 +26,7 @@ export function runDiagnostic(state: Readonly<UartMissionState>, device: OutputD
   } else if (device === "ram") {
     feedback = "RAM stores data. It does not transmit it to the computer. Try another output device.";
   } else if (!state.uartConnected) {
-    feedback = "UART was asked to transmit, but the cable is disconnected. Connect it in Workbench, then run the diagnostic again.";
+    feedback = "UART was asked to transmit, but the cable is disconnected. Connect it in POCKET, then run the diagnostic again.";
   } else {
     return {
       state: { ...state, terminalOutput: state.terminalOutput + "A" },

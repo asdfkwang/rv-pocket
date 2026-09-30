@@ -3,6 +3,7 @@ import { runDiagnostic, setUartConnection } from "./sim/uart";
 import { renderWorkbench } from "./views/workbench";
 import { renderComputer } from "./views/computer";
 import { renderManual } from "./views/manual";
+import { renderPocket } from "./views/pocket";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -32,9 +33,8 @@ function render() {
       </section>
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Chapter 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
-      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderManual(state)}</div>
+      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : state.view === "pocket" ? renderPocket(state) : renderManual(state)}</div>
     </main>
-    <footer class="site-footer"><span>Find the problem. Read the manual. Fix the machine.</span><span>LOCAL SESSION / NO SAVED PROGRESS</span></footer>
   </div>`;
   const focusTarget = focusId ? document.getElementById(focusId) : null;
   if (focusTarget) focusTarget.focus({ preventScroll: true });

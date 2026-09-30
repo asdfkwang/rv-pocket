@@ -5,15 +5,17 @@ export function renderComputer(state: AppState): string {
   const panels = currentChapter(state).computer.panels;
   if (state.active.id === 0) {
     return `<section class="computer-intro panel">
+      <div class="back-row"><button id="computer-back" class="text-button" data-action="view" data-view="workbench">← Back</button></div>
       <span class="eyebrow">YOUR DEVELOPMENT COMPUTER</span><div class="intro-prompt" aria-hidden="true">&gt;_</div>
       <h2>A window into the machine.</h2>
       <p>This is where you will run diagnostics, try repairs, and read RV Pocket's responses. Each mission brings the tools it needs.</p>
-      <p>There is nothing to configure yet. Explore the Workbench or open the Manual, then start your first repair when you are ready.</p>
-      <div class="button-row"><button id="computer-to-workbench" class="button secondary" data-action="view" data-view="workbench">Back to Workbench</button><button id="computer-to-manual" class="button secondary" data-action="view" data-view="manual">Open Manual</button></div>
+      <p>There is nothing to configure yet. Explore POCKET or open the BOOK, then start your first repair when you are ready.</p>
+      <div class="button-row"><button id="computer-to-manual" class="button secondary" data-action="view" data-view="manual">Open BOOK</button></div>
     </section>`;
   }
   const machine = state.active.machine;
   return `<div class="computer-grid">
+    <div class="back-row"><button id="computer-back" class="text-button" data-action="view" data-view="workbench">← Back</button></div>
     ${panels.includes("terminal") ? `<section class="terminal-panel" aria-labelledby="terminal-heading">
       <div class="terminal-header"><h2 id="terminal-heading">Serial terminal</h2><span><span class="status-dot ${machine.uartConnected ? "connected" : ""}"></span>${machine.uartConnected ? "LINK CONNECTED" : "NO CONNECTION"}</span></div>
       <div class="terminal-body"><span class="terminal-label">RECEIVED FROM RV POCKET</span>
@@ -29,8 +31,8 @@ export function renderComputer(state: AppState): string {
       <select id="output-device"><option value="" ${state.ui.selectedDevice === "" ? "selected" : ""}>Choose a device…</option>${["cpu", "ram", "uart"].map((device) => `<option value="${device}" ${state.ui.selectedDevice === device ? "selected" : ""}>${device.toUpperCase()}</option>`).join("")}</select>
       <div class="value-field"><span class="field-label">Supplied value</span><code>65 <span>('A')</span></code><span class="muted">The value is provided. No code to write.</span></div>
       <button id="run-diagnostic" class="button primary full-width" data-action="run">Run diagnostic <span aria-hidden="true">→</span></button>
-      <p class="small muted">Need a clue? <button id="diagnostic-to-manual" class="text-button" data-action="view" data-view="manual">Look in the Manual</button>.</p>
-      <button id="diagnostic-to-workbench" class="text-button" data-action="view" data-view="workbench">${machine.uartConnected ? "Inspect cable in Workbench" : "Connect the cable in Workbench"} <span aria-hidden="true">↗</span></button>
+      <p class="small muted">Need a clue? <button id="diagnostic-to-manual" class="text-button" data-action="view" data-view="manual">Look in the BOOK</button>.</p>
+      <button id="diagnostic-to-workbench" class="text-button" data-action="view" data-view="pocket">${machine.uartConnected ? "Inspect cable in POCKET" : "Connect the cable in POCKET"} <span aria-hidden="true">↗</span></button>
     </section>` : ""}
   </div>`;
 }
