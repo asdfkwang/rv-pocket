@@ -2,7 +2,7 @@ import { chapter00, type OnboardingState } from "./chapters/chapter-00";
 import { chapter01 } from "./chapters/chapter-01";
 import type { OutputDevice, UartMissionState } from "./sim/uart";
 
-export type View = "workbench" | "computer" | "manual" | "pocket";
+export type View = "workbench" | "computer" | "manual";
 export type ChapterId = 0 | 1;
 export interface Route { chapterId: ChapterId; view: View }
 export type ActiveMission =
@@ -23,7 +23,7 @@ export interface AppState {
 }
 
 export const chapters = [chapter00, chapter01] as const;
-export const views: readonly View[] = ["workbench", "computer", "manual", "pocket"];
+export const views: readonly View[] = ["workbench", "computer", "manual"];
 
 export function createAppState(route: Route): AppState {
   return {

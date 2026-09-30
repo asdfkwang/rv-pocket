@@ -19,7 +19,7 @@ export const chapter01: Chapter<UartMissionState> = {
       { kind: "text", body: "A black screen is not the whole story. RV Pocket has a CPU that executes instructions, RAM that stores data, and a separate UART peripheral that handles serial communication." },
       { kind: "text", body: "A small diagnostic is already available on the board. It asks the output device to send one character. Select UART and use the supplied value 65 ('A'); no program or number conversion is needed." },
       { kind: "ascii", body: "RV Pocket                 Computer\n[ UART ] ----- cable ----> [ terminal ]" },
-      { kind: "text", body: "The UART cable carries the board's response to the computer. Connect it in POCKET, then run the diagnostic in PC. Connecting the cable by itself does not send a character." },
+      { kind: "text", body: "The UART cable carries the board's response to the computer. Connect the cable below, then run the diagnostic. Connecting the cable by itself does not send a character." },
       { kind: "text", body: "Receiving A proves this diagnostic path works. It does not mean the screen or every other part has been repaired." },
     ],
   }],

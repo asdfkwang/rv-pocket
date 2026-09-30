@@ -3,16 +3,14 @@ import { runDiagnostic, setUartConnection } from "./sim/uart";
 import { renderWorkbench } from "./views/workbench";
 import { renderComputer } from "./views/computer";
 import { renderManual } from "./views/manual";
-import { renderPocket } from "./views/pocket";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
 const tourSteps = [
   { target: "chapter-select", title: "Chapters", body: "Switch chapters here. Each chapter is one repair." },
-  { target: "open-computer", title: "PC", body: "Run diagnostics and read what the machine sends back." },
+  { target: "open-station", title: "STATION", body: "Work on the machine here: inspect the device, connect the cable, run diagnostics." },
   { target: "open-manual", title: "BOOK", body: "The old manual. Check it whenever something is unclear." },
-  { target: "open-pocket", title: "POCKET", body: "The broken pocket computer from the old studio." },
   { target: "start-chapter", title: "Start Chapter 01", body: "Ready? Begin the first repair." },
 ] as const;
 const initial = parseRoute(location.hash);
@@ -35,7 +33,7 @@ function render() {
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Chapter 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
-      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : state.view === "pocket" ? renderPocket(state) : renderManual(state)}</div>
+      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderManual(state)}</div>
     </main>
     ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
@@ -99,7 +97,7 @@ app.addEventListener("click", (event) => {
       if (state.active.id === 0) state.ui.tourStep = 0;
       render();
       document.getElementById("main-content")?.focus();
-      announce("Got it. Three buttons: PC, Book, Pocket.");
+      announce("Got it. Two buttons: Station, Book.");
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;

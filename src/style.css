@@ -135,12 +135,7 @@ body {
 .hub-button span:last-child { font-size: 0.85rem; color: var(--muted); }
 .hub-mark { font-weight: 700; }
 
-.pocket-screen {
-  max-width: 480px;
-  margin: 0 auto;
-}
-
-.device-figure { margin: 0 0 16px; }
+.device-panel .device { margin: 12px 0 8px; }
 
 .eyebrow {
   display: block;
@@ -174,6 +169,7 @@ body {
 }
 
 .panel,
+.device-panel,
 .terminal-panel,
 .diagnostic-panel,
 .manual-paper,
