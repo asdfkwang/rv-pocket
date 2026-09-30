@@ -22,11 +22,11 @@ function render() {
   const complete = missionComplete(state);
   document.title = `Chapter ${String(chapter.id).padStart(2, "0")} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    <div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div>
+    <div class="top-bar"><div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
     <main id="main-content" tabindex="-1">
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       <section class="mission-header" aria-labelledby="mission-title">
-        <div class="mission-heading"><div><span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span><h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
+        <div class="mission-heading"><div><span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span><h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1></div></div>
         <p class="mission-observation">${e(chapter.mission.initialObservation)}</p>
         <div class="mission-objective"><span class="eyebrow">${chapter.id === 0 ? "YOUR FIRST STEP" : "MISSION"}</span><strong>${e(chapter.mission.summary)}</strong>${chapter.id === 0 ? `<button id="start-chapter" class="button primary" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : `<span class="mission-status ${complete ? "complete" : ""}">${complete ? "REPAIR COMPLETE" : "IN PROGRESS"}</span>`}</div>
       </section>
