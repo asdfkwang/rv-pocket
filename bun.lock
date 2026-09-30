@@ -5,10 +5,8 @@
     "": {
       "name": "rv-pocket",
       "devDependencies": {
-        "@types/bun": "latest",
-      },
-      "peerDependencies": {
-        "typescript": "^5",
+        "@types/bun": "1.4.2",
+        "typescript": "5.9.3",
       },
     },
   },
