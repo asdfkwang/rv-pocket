@@ -41,7 +41,14 @@ body {
 .app-shell {
   max-width: 960px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 16px 16px 88px;
+}
+
+.start-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
 }
 
 .top-bar {

@@ -26,15 +26,18 @@ function render() {
     <div class="top-bar"><div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
     <main id="main-content" tabindex="-1">
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
-      <section class="mission-header" aria-labelledby="mission-title">
+      ${state.active.id === 0 && state.ui.introDismissed ? "" : `<section class="mission-header" aria-labelledby="mission-title">
         <div class="mission-heading"><div><span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span><h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1></div></div>
         <p class="mission-observation">${e(chapter.mission.initialObservation)}</p>
-        <div class="mission-objective"><span class="eyebrow">${chapter.id === 0 ? "YOUR FIRST STEP" : "MISSION"}</span><strong>${e(chapter.mission.summary)}</strong>${chapter.id === 0 ? `<button id="start-chapter" class="button primary" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : `<span class="mission-status ${complete ? "complete" : ""}">${complete ? "REPAIR COMPLETE" : "IN PROGRESS"}</span>`}</div>
-      </section>
+        ${chapter.id === 0
+          ? `<div class="mission-objective"><span class="eyebrow">YOUR FIRST STEP</span><strong>${e(chapter.mission.summary)}</strong><button id="got-it" class="button primary" data-action="dismiss">Got it</button></div>`
+          : `<div class="mission-objective"><span class="eyebrow">MISSION</span><strong>${e(chapter.mission.summary)}</strong><span class="mission-status ${complete ? "complete" : ""}">${complete ? "REPAIR COMPLETE" : "IN PROGRESS"}</span></div>`}
+      </section>`}
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Chapter 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
       <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : state.view === "pocket" ? renderPocket(state) : renderManual(state)}</div>
     </main>
+    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : ""}
   </div>`;
   const focusTarget = focusId ? document.getElementById(focusId) : null;
   if (focusTarget) focusTarget.focus({ preventScroll: true });
@@ -75,6 +78,12 @@ app.addEventListener("click", (event) => {
     case "start":
       if (state.active.id === 0) state.active.machine.started = true;
       goTo(1, state.view);
+      return;
+    case "dismiss":
+      state.ui.introDismissed = true;
+      render();
+      document.getElementById("open-computer")?.focus();
+      announce("Got it. Three buttons: PC, Book, Pocket.");
       return;
     case "inspect":
       state.ui.inspected = true;

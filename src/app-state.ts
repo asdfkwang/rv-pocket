@@ -13,6 +13,7 @@ export interface UiState {
   quizAnswers: Record<string, string>;
   inspected: boolean;
   feedback: string;
+  introDismissed: boolean;
 }
 export interface AppState {
   active: ActiveMission;
@@ -29,7 +30,7 @@ export function createAppState(route: Route): AppState {
       ? { id: 0, machine: chapter00.createInitialState() }
       : { id: 1, machine: chapter01.createInitialState() },
     view: route.view,
-    ui: { selectedDevice: "", quizAnswers: {}, inspected: false, feedback: "" },
+    ui: { selectedDevice: "", quizAnswers: {}, inspected: false, feedback: "", introDismissed: false },
   };
 }
 
