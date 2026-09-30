@@ -51,6 +51,36 @@ body {
   z-index: 5;
 }
 
+.tour-glow { animation: tour-pulse 1.2s ease-in-out infinite; }
+
+@keyframes tour-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(31, 92, 61, 0.55); }
+  50% { box-shadow: 0 0 0 12px rgba(31, 92, 61, 0); }
+}
+
+.tour-card {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 88px;
+  z-index: 6;
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  padding: 16px;
+  max-width: 340px;
+  width: calc(100% - 32px);
+}
+
+.tour-card p { margin: 8px 0 12px; }
+
+.tour-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tour-spotlight { outline: 3px solid var(--accent); outline-offset: 4px; }
+
 .top-bar {
   display: flex;
   justify-content: space-between;

@@ -14,6 +14,7 @@ export interface UiState {
   inspected: boolean;
   feedback: string;
   introDismissed: boolean;
+  tourStep: number | null;
 }
 export interface AppState {
   active: ActiveMission;
@@ -30,7 +31,7 @@ export function createAppState(route: Route): AppState {
       ? { id: 0, machine: chapter00.createInitialState() }
       : { id: 1, machine: chapter01.createInitialState() },
     view: route.view,
-    ui: { selectedDevice: "", quizAnswers: {}, inspected: false, feedback: "", introDismissed: false },
+    ui: { selectedDevice: "", quizAnswers: {}, inspected: false, feedback: "", introDismissed: false, tourStep: null },
   };
 }
 

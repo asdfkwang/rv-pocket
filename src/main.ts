@@ -8,6 +8,13 @@ import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
+const tourSteps = [
+  { target: "chapter-select", title: "Chapters", body: "Switch chapters here. Each chapter is one repair." },
+  { target: "open-computer", title: "PC", body: "Run diagnostics and read what the machine sends back." },
+  { target: "open-manual", title: "BOOK", body: "The old manual. Check it whenever something is unclear." },
+  { target: "open-pocket", title: "POCKET", body: "The broken pocket computer from the old studio." },
+  { target: "start-chapter", title: "Start Chapter 01", body: "Ready? Begin the first repair." },
+] as const;
 const initial = parseRoute(location.hash);
 let state = createAppState(initial.route);
 let routeNotice = initial.notice;
@@ -30,7 +37,7 @@ function render() {
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
       <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : state.view === "pocket" ? renderPocket(state) : renderManual(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
       <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
@@ -39,6 +46,13 @@ function render() {
       <button id="got-it" class="button primary" data-action="dismiss">Got it</button>
     </div></div>`}
   </div>`;
+  const tour = state.active.id === 0 && state.ui.introDismissed && state.ui.tourStep !== null
+    ? { ...tourSteps[state.ui.tourStep]!, index: state.ui.tourStep }
+    : null;
+  if (tour) {
+    app.insertAdjacentHTML("beforeend", `<div class="tour-card" role="status"><span class="eyebrow">GUIDE ${tour.index + 1} / ${tourSteps.length}</span><strong>${tour.title}</strong><p>${tour.body}</p><div class="tour-actions"><button id="tour-skip" class="text-button" data-action="tour-skip">Skip</button><button id="tour-next" class="button primary" data-action="tour-next">${tour.index === tourSteps.length - 1 ? "Done" : "Next"}</button></div></div>`);
+    document.getElementById(tour.target)?.classList.add("tour-spotlight");
+  }
   const focusTarget = focusId ? document.getElementById(focusId) : null;
   if (focusTarget) focusTarget.focus({ preventScroll: true });
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
@@ -82,9 +96,29 @@ app.addEventListener("click", (event) => {
       return;
     case "dismiss":
       state.ui.introDismissed = true;
+      if (state.active.id === 0) state.ui.tourStep = 0;
       render();
       document.getElementById("main-content")?.focus();
       announce("Got it. Three buttons: PC, Book, Pocket.");
+      return;
+    case "tour-next": {
+      if (state.ui.tourStep === null) return;
+      const next = state.ui.tourStep + 1;
+      state.ui.tourStep = next >= tourSteps.length ? null : next;
+      render();
+      if (state.ui.tourStep === null) {
+        document.getElementById("main-content")?.focus();
+        announce("Guide done.");
+      } else {
+        document.getElementById("tour-next")?.focus();
+        announce(tourSteps[state.ui.tourStep]!.body);
+      }
+      return;
+    }
+    case "tour-skip":
+      state.ui.tourStep = null;
+      render();
+      document.getElementById("main-content")?.focus();
       return;
     case "inspect":
       state.ui.inspected = true;
