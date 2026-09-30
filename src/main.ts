@@ -23,16 +23,16 @@ function render() {
   const complete = missionComplete(state);
   document.title = `Chapter ${String(chapter.id).padStart(2, "0")} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    <div class="top-bar"><div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
-    <main id="main-content" tabindex="-1">
+    <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
+    <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
-      ${state.active.id === 0 && state.ui.introDismissed ? "" : `<section class="mission-header" aria-labelledby="mission-title">
-        <div class="mission-heading"><div><span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span><h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1></div></div>
+      ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
+        <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
+        <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
         <p class="mission-observation">${e(chapter.mission.initialObservation)}</p>
-        ${chapter.id === 0
-          ? `<div class="mission-objective"><span class="eyebrow">YOUR FIRST STEP</span><strong>${e(chapter.mission.summary)}</strong><button id="got-it" class="button primary" data-action="dismiss">Got it</button></div>`
-          : `<div class="mission-objective"><span class="eyebrow">MISSION</span><strong>${e(chapter.mission.summary)}</strong><span class="mission-status ${complete ? "complete" : ""}">${complete ? "REPAIR COMPLETE" : "IN PROGRESS"}</span></div>`}
-      </section>`}
+        <p><strong>${e(chapter.mission.summary)}</strong></p>
+        <button id="got-it" class="button primary" data-action="dismiss">Got it</button>
+      </div></div>`}
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Chapter 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
       <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : state.view === "pocket" ? renderPocket(state) : renderManual(state)}</div>
@@ -42,6 +42,7 @@ function render() {
   const focusTarget = focusId ? document.getElementById(focusId) : null;
   if (focusTarget) focusTarget.focus({ preventScroll: true });
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
+  if (!state.ui.introDismissed) document.getElementById("got-it")?.focus();
 }
 
 function announce(message: string) { announcement.textContent = message; }
