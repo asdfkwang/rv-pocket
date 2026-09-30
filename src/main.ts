@@ -22,14 +22,7 @@ function render() {
   const complete = missionComplete(state);
   document.title = `Chapter ${String(chapter.id).padStart(2, "0")} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    <header class="site-header">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">RV</span><span>RV Pocket<small>ONE REPAIR AT A TIME</small></span></div>
-      <span class="edition">A HARDWARE REPAIR STORY <span> / </span> PROTOTYPE 01</span>
-    </header>
-    <div class="navigation-bar">
-      <div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div>
-      <nav class="view-nav" aria-label="Views">${views.map((view) => `<button id="view-${view}" class="view-button ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ""}>${viewLabels[view]}</button>`).join("")}</nav>
-    </div>
+    <div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div>
     <main id="main-content" tabindex="-1">
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       <section class="mission-header" aria-labelledby="mission-title">

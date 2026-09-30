@@ -44,9 +44,7 @@ body {
   padding: 16px;
 }
 
-.site-header,
-.site-footer,
-.navigation-bar {
+.site-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -54,11 +52,14 @@ body {
   flex-wrap: wrap;
 }
 
-.site-header,
-.navigation-bar {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
+.chapter-select {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .site-footer {
@@ -69,26 +70,6 @@ body {
   font-size: 0.85rem;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-}
-
-.brand-mark {
-  border: 2px solid var(--ink);
-  padding: 2px 6px;
-}
-
-.brand small {
-  display: block;
-  font-weight: 400;
-  font-size: 0.7rem;
-  color: var(--muted);
-}
-
-.edition { font-size: 0.8rem; color: var(--muted); }
 .eyebrow {
   display: block;
   font-size: 0.75rem;
@@ -96,9 +77,6 @@ body {
   color: var(--muted);
 }
 
-.view-nav { display: flex; gap: 8px; }
-
-.view-button,
 .button {
   border: 1px solid var(--ink);
   background: var(--panel);
@@ -107,7 +85,6 @@ body {
   cursor: pointer;
 }
 
-.view-button.active,
 .button.primary {
   background: var(--ink);
   color: #fff;
