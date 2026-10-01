@@ -9,6 +9,15 @@ out
 dist
 *.tgz
 
+# Blender autosave / backup intermediates
+*.blend[0-9]
+*.blend1
+
+# Blender render output (WIP assets; regenerate with scripts/build-pocket-*.py)
+assets/logo-3d*.png
+assets/crt-3d*.png
+assets/pocket-internals-3d*.png
+
 # code coverage
 coverage
 *.lcov
