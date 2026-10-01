@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# generated (single source: ebook/*.md, game src)
+src/ebook-content.ts
+
 # output
 out
 dist

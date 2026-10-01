@@ -2,7 +2,7 @@ import { chapters, createAppState, currentChapter, missionComplete, navigate, pa
 import { runDiagnostic, setUartConnection } from "./sim/uart";
 import { renderWorkbench } from "./views/workbench";
 import { renderComputer } from "./views/computer";
-import { renderManual } from "./views/manual";
+import { getBookmarks, getEbookSlug, getEbookTitle, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery } from "./views/ebook";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -28,14 +28,14 @@ function render() {
   const complete = missionComplete(state);
   document.title = `${chapter.id === 0 ? "Prologue" : `Episode ${String(chapter.id).padStart(2, "0")}`} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>
+    ${state.view === "manual" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>`}
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Episode 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
-      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderManual(state)}</div>
+      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderEbook(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed && state.view !== "manual" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
       <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
@@ -118,6 +118,19 @@ app.addEventListener("click", (event) => {
       render();
       document.getElementById("main-content")?.focus();
       return;
+    case "ebook-open": {
+      const slug = button.dataset.slug ?? "";
+      openEbookChapter(slug);
+      render();
+      document.getElementById("ebook-title")?.focus();
+      announce(getEbookTitle());
+      return;
+    }
+    case "ebook-section": {
+      const target = button.dataset.target ?? "";
+      document.getElementById(target)?.scrollIntoView({ block: "start" });
+      return;
+    }
     case "inspect":
       state.ui.inspected = true;
       announce(state.active.id === 1 ? "Power is on. The screen is black. A connector on the edge is marked UART." : "A worn pocket computer from the old studio. Start the first repair when you are ready.");
@@ -163,6 +176,15 @@ app.addEventListener("change", (event) => {
     state.ui.quizAnswers[question.id] = target.value;
     render();
     announce(`${target.value === question.answerId ? "That's right." : "Not quite. Try again."} ${question.explanation}`);
+  }
+});
+
+app.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement && target.id === "ebook-search") {
+    setEbookQuery(target.value);
+    const toc = document.getElementById("ebook-toc");
+    if (toc) toc.innerHTML = renderEbookToc(getEbookSlug(), getBookmarks(state.active.id));
   }
 });
 

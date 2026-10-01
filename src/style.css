@@ -137,6 +137,93 @@ body {
 
 .device-panel .device { margin: 12px 0 8px; }
 
+.ebook {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 760px) {
+  .ebook { grid-template-columns: 240px 1fr; align-items: start; }
+  .ebook-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+}
+
+.ebook-side {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+
+.ebook-bookmarks {
+  border: 2px solid var(--accent);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.ebook-bookmarks ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.ebook-bookmarks li { margin-bottom: 4px; }
+
+#ebook-search {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+
+.ebook-toc-list { list-style: none; margin: 0; padding: 0; }
+
+.ebook-toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.ebook-toc-item:hover { text-decoration: underline; }
+.ebook-toc-item.active { background: var(--ink); color: #fff; }
+.ebook-star { color: var(--accent); }
+.ebook-toc-item.active .ebook-star { color: inherit; }
+
+.ebook-page {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 24px;
+  max-width: 68ch;
+}
+
+.ebook-page h1 { margin: 4px 0 16px; }
+
+.ebook-sections { margin-bottom: 16px; }
+.ebook-sections ul { margin: 8px 0 0; padding-left: 20px; }
+.ebook-sections li { margin-bottom: 4px; }
+
+.ebook-body pre {
+  background: #111;
+  color: #e8f5e9;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.ebook-body code { font-size: 0.9em; }
+.ebook-body table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.ebook-body th, .ebook-body td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+.ebook-body blockquote { border-left: 4px solid var(--line); margin: 12px 0; padding-left: 12px; color: var(--muted); }
+
+.ebook-body details {
+  border: 1px solid var(--ink);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.ebook-body summary { cursor: pointer; font-weight: 700; }
+
 .eyebrow {
   display: block;
   font-size: 0.75rem;
