@@ -190,16 +190,8 @@ def block(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, col=None, sub=2):
     link(o, col or col_scr)
     return o
 
-by = BEZEL_FRONT + BEZ_D / 2.0
-block("Screen_Bezel_Top", SX, by, SZ + GLASS_H / 2.0 + BEZ_T / 2.0,
-      GLASS_W + 2 * BEZ_T, BEZ_D, BEZ_T, mat_black, 0.07)
-block("Screen_Bezel_Bottom", SX, by, SZ - GLASS_H / 2.0 - BEZ_T / 2.0,
-      GLASS_W + 2 * BEZ_T, BEZ_D, BEZ_T, mat_black, 0.07)
-block("Screen_Bezel_Left", SX - GLASS_W / 2.0 - BEZ_T / 2.0, by, SZ,
-      BEZ_T, BEZ_D, GLASS_H, mat_black, 0.07)
-block("Screen_Bezel_Right", SX + GLASS_W / 2.0 + BEZ_T / 2.0, by, SZ,
-      BEZ_T, BEZ_D, GLASS_H, mat_black, 0.07)
-
+# The cream shell itself is the cover: the glass sits in a recess and the
+# shell surface wraps around its edge. No separate bezel frame.
 block("Screen_Glass", SX, GLASS_FRONT + 0.09, SZ,
       GLASS_W, 0.18, GLASS_H, mat_screen, 0.09)
 

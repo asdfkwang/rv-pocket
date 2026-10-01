@@ -1,8 +1,15 @@
+import { t } from "./i18n";
 import { chapter00, type OnboardingState } from "./chapters/chapter-00";
 import { chapter01 } from "./chapters/chapter-01";
 import type { UartMissionState } from "./sim/uart";
 
 export type View = "station" | "terminal" | "ebook";
+
+const viewLabelKeys = { station: "station", terminal: "terminalView", ebook: "ebookView" } as const;
+
+export function viewLabel(view: View): string {
+  return t(viewLabelKeys[view]);
+}
 export type ChapterId = 0 | 1;
 export interface Route { chapterId: ChapterId; view: View }
 export type ActiveMission =
@@ -65,7 +72,7 @@ export function parseRoute(hash: string): { route: Route; notice: string } {
   const view = views.find((candidate) => candidate === mappedView) ?? "station";
   return {
     route: { chapterId, view },
-    notice: validChapter ? "" : "That episode is not available yet. You are back at the Prologue.",
+    notice: validChapter ? "" : t("routeNoticeUnavailable"),
   };
 }
 
