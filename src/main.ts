@@ -1,7 +1,7 @@
 import { chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
 import { renderStation } from "./views/station";
 import { renderTerminal } from "./views/terminal";
-import { getBookmarks, getCheckIndex, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck } from "./views/ebook";
+import { confirmCheck, getBookmarks, getCheckIndex, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/ebook";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -155,6 +155,14 @@ app.addEventListener("click", (event) => {
       document.getElementById("check-question")?.focus();
       return;
     }
+    case "check-confirm": {
+      const q = getCurrentCheck();
+      confirmCheck();
+      render();
+      document.getElementById("check-question")?.focus();
+      if (q) announce(isCheckCorrect(q.answers, getCheckSelection().selected) ? "That's right." : "Not quite. Try again.");
+      return;
+    }
     case "check-harder": {
       const q = getCurrentCheck();
       if (!q) return;
@@ -178,6 +186,11 @@ app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
     if (target.value === "0" || target.value === "1") goTo(Number(target.value) as ChapterId, state.view);
+  } else if (target instanceof HTMLInputElement && target.dataset.checkChoice) {
+    const q = getCurrentCheck();
+    if (!q || q.kind === "open") return;
+    toggleCheckChoice(target.dataset.checkChoice, q.kind === "multi");
+    render();
   } else if (target instanceof HTMLInputElement && target.dataset.question) {
     const question = currentChapter(state).quiz.find((item) => item.id === target.dataset.question);
     if (!question || !question.choices.some((choice) => choice.id === target.value)) return;

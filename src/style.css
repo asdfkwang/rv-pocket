@@ -375,7 +375,12 @@ body {
 }
 
 .quiz-choice.selected { border-color: var(--ink); }
+.quiz-choice.correct { border: 2px solid var(--accent); }
+.quiz-choice.wrong { border: 1px dashed #999; }
 .quiz-feedback.correct { color: var(--accent); }
+
+.check-options { margin: 12px 0; }
+.check-explanation { border-left: 4px solid var(--accent); padding-left: 12px; margin: 12px 0; }
 
 .field-label { display: block; margin: 12px 0 4px; font-weight: 600; }
 .muted, .small { color: var(--muted); }
