@@ -85,21 +85,40 @@ export async function parseCheck(md: string): Promise<{ intro: string; questions
   return { intro, questions };
 }
 
-const readme = await Bun.file(ROOT + "ebook/README.md").text();
-const entries = [...readme.matchAll(/- \[(Chapter \d+ — [^\]]+)\]\((chapters\/[^)]+)\)/g)];
-if (entries.length === 0) throw new Error("No TOC entries found in ebook/README.md");
+interface ChapterEntry { num: string; file: string }
 
-const chapters = [];
-for (const [, title, file] of entries) {
-  if (!title || !file) throw new Error("Bad TOC entry");
-  const md = await Bun.file(ROOT + "ebook/" + file).text();
-  const num = title.match(/Chapter (\d+)/)![1]!;
-  const slug = file.replace(/^chapters\//, "").replace(/\.md$/, "");
-  const bodyMd = md.split(/^## Check\s*$/m)[0]!;
-  const html = await marked.parse(bodyMd, { async: false }) as string;
-  const { html: withIds, headings } = addHeadingIds(html, new Set());
-  const { intro: checkIntro, questions: check } = await parseCheck(md);
-  chapters.push({ slug, num, title, html: withIds, headings, text: md, checkIntro, check });
+async function readToc(lang: "en" | "ko"): Promise<ChapterEntry[]> {
+  const readmePath = lang === "ko" ? ROOT + "ebook/ko/README.md" : ROOT + "ebook/README.md";
+  const readme = await Bun.file(readmePath).text();
+  // Accept both "Chapter 01 — Title" and "챕터 01 — Title" link labels.
+  const entries = [...readme.matchAll(/- \[(?:Chapter|챕터) (\d+)[^\]]*\]\(([^)]+)\)/g)];
+  if (entries.length === 0) throw new Error(`No TOC entries found in ${readmePath}`);
+  return entries.map(([, num, file]) => ({ num: num!, file: file! }));
+}
+
+async function buildChapters(entries: ChapterEntry[]): Promise<unknown[]> {
+  const chapters = [];
+  for (const { num, file } of entries) {
+    const md = await Bun.file(ROOT + "ebook/" + file).text();
+    const slug = file.replace(/^(ko\/)?chapters\//, "").replace(/\.md$/, "");
+    const title = md.split("\n")[0]?.replace(/^#\s*/, "").trim() ?? `Chapter ${num}`;
+    const bodyMd = md.split(/^## Check\s*$/m)[0]!;
+    const html = await marked.parse(bodyMd, { async: false }) as string;
+    const { html: withIds, headings } = addHeadingIds(html, new Set());
+    const { intro: checkIntro, questions: check } = await parseCheck(md);
+    chapters.push({ slug, num, title, html: withIds, headings, text: md, checkIntro, check });
+  }
+  return chapters;
+}
+
+const enChapters = await buildChapters(await readToc("en"));
+
+// Korean book is optional; fall back to English when ebook/ko is absent.
+let koChapters: unknown[] = enChapters;
+try {
+  koChapters = await buildChapters(await readToc("ko"));
+} catch {
+  console.log("ebook/ko not found, using English book for all languages");
 }
 
 const out = `// Generated from ebook/*.md by bun run sync-ebook. Do not edit.
@@ -107,8 +126,9 @@ export interface EbookChoice { id: string; html: string }
 export interface EbookCheckQuestion { html: string; plain: string; hintHtml: string | null; choices: EbookChoice[]; answers: string[]; explanationHtml: string | null; kind: "open" | "single" | "multi" }
 export interface EbookHeading { id: string; text: string; depth: number }
 export interface EbookChapter { slug: string; num: string; title: string; html: string; headings: EbookHeading[]; text: string; checkIntro: string; check: EbookCheckQuestion[] }
-export const EBOOK_CHAPTERS: readonly EbookChapter[] = ${JSON.stringify(chapters)};
+export const EBOOK_CHAPTERS_EN: readonly EbookChapter[] = ${JSON.stringify(enChapters)};
+export const EBOOK_CHAPTERS_KO: readonly EbookChapter[] = ${JSON.stringify(koChapters)};
 `;
 
 await Bun.write(ROOT + "src/ebook-content.ts", out);
-console.log(`ebook: ${chapters.length} chapters -> src/ebook-content.ts`);
+console.log(`ebook: ${enChapters.length} en chapters, ${koChapters.length} ko chapters -> src/ebook-content.ts`);

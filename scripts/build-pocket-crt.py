@@ -203,16 +203,8 @@ def cblk(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, sub=2):
     set_mat(o, mat)
     return link(o, col_cdet)
 
-_gby = CRT_BEZEL_FRONT + GB_D / 2.0
-cblk("CRT_Bezel_Top", GX, _gby, GZ + GH / 2.0 + GB_T / 2.0,
-     GW + 2 * GB_T, GB_D, GB_T, mat_back_dark, 0.08)
-cblk("CRT_Bezel_Bottom", GX, _gby, GZ - GH / 2.0 - GB_T / 2.0,
-     GW + 2 * GB_T, GB_D, GB_T, mat_back_dark, 0.08)
-cblk("CRT_Bezel_Left", GX - GW / 2.0 - GB_T / 2.0, _gby, GZ,
-     GB_T, GB_D, GH, mat_back_dark, 0.08)
-cblk("CRT_Bezel_Right", GX + GW / 2.0 + GB_T / 2.0, _gby, GZ,
-     GB_T, GB_D, GH, mat_back_dark, 0.08)
-
+# The cream bezel is the cover: the glass sits in a recess and the cream
+# surface wraps around its edge. No separate bezel frame.
 cblk("CRT_Glass", GX, CRT_GLASS_FRONT + 0.09, GZ, GW, 0.18, GH, mat_screen, 0.11)
 
 bpy.ops.mesh.primitive_plane_add(size=1, location=(GX + 0.45, CRT_GLASS_FRONT - 0.03, GZ + 0.3))

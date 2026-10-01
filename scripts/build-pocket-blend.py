@@ -190,16 +190,8 @@ def block(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, col=None, sub=2):
     link(o, col or col_scr)
     return o
 
-by = BEZEL_FRONT + BEZ_D / 2.0
-block("Screen_Bezel_Top", SX, by, SZ + GLASS_H / 2.0 + BEZ_T / 2.0,
-      GLASS_W + 2 * BEZ_T, BEZ_D, BEZ_T, mat_black, 0.07)
-block("Screen_Bezel_Bottom", SX, by, SZ - GLASS_H / 2.0 - BEZ_T / 2.0,
-      GLASS_W + 2 * BEZ_T, BEZ_D, BEZ_T, mat_black, 0.07)
-block("Screen_Bezel_Left", SX - GLASS_W / 2.0 - BEZ_T / 2.0, by, SZ,
-      BEZ_T, BEZ_D, GLASS_H, mat_black, 0.07)
-block("Screen_Bezel_Right", SX + GLASS_W / 2.0 + BEZ_T / 2.0, by, SZ,
-      BEZ_T, BEZ_D, GLASS_H, mat_black, 0.07)
-
+# The cream shell itself is the cover: the glass sits in a recess and the
+# shell surface wraps around its edge. No separate bezel frame.
 block("Screen_Glass", SX, GLASS_FRONT + 0.09, SZ,
       GLASS_W, 0.18, GLASS_H, mat_screen, 0.09)
 
@@ -278,13 +270,24 @@ pill("Btn_Pill_R", 0.02, -0.72)
 
 # 2 red dome buttons: right, diagonal. Kept inside the shell (x < 1.9)
 def red_btn(name, x, z):
-    o = block(name, x, CTL_FRONT + 0.09, z, 0.56, 0.18, 0.56,
-              mat_red, 0.06, seg=3, col=col_ctl)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.26, segments=32, ring_count=16,
-                                         location=(x, CTL_FRONT + 0.10, z))
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.28, depth=0.16,
+                                        location=(x, CTL_FRONT + 0.06, z),
+                                        rotation=(math.radians(90), 0, 0))
+    o = bpy.context.active_object
+    o.name = name
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+    bv = o.modifiers.new("Bevel", "BEVEL")
+    bv.width = 0.055; bv.segments = 3; bv.profile = 0.7
+    for p in o.data.polygons:
+        p.use_smooth = True
+    set_mat(o, mat_red); link(o, col_ctl)
+
+    # dome cap: front half of a squashed sphere, sitting on the cylinder rim
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.255, segments=48, ring_count=24,
+                                         location=(x, CTL_FRONT + 0.075, z))
     cap = bpy.context.active_object
     cap.name = name + "_Dome"
-    cap.scale = (1.0, 0.42, 1.0)
+    cap.scale = (1.0, 0.55, 1.0)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     for p in cap.data.polygons:
         p.use_smooth = True
@@ -407,18 +410,21 @@ except Exception:
 # save master blend BEFORE slow renders so pocket.blend survives any render issue
 bpy.ops.wm.save_as_mainfile(filepath=BLEND_OUT)
 print("SAVED-BEFORE-RENDER:", BLEND_OUT, flush=True)
-scene.render.resolution_percentage = 100
-scene.render.resolution_x = 2048
-scene.render.resolution_y = 2048
-scene.render.filepath = RENDER_BIG
-bpy.ops.render.render(write_still=True)
-# small web version (same scene, no blend change)
-# small web version (same scene, fewer samples for speed)
-scene.cycles.samples = 32
-scene.render.resolution_x = 512
-scene.render.resolution_y = 512
-scene.render.filepath = RENDER_SMALL
-bpy.ops.render.render(write_still=True)
+def render_to(path, res, samples):
+    """Render and write. A failed write must not abort the rest of the build."""
+    scene.render.resolution_percentage = 100
+    scene.render.resolution_x = res
+    scene.render.resolution_y = res
+    scene.cycles.samples = samples
+    scene.render.filepath = path
+    try:
+        bpy.ops.render.render(write_still=True)
+        print("RENDER OK:", path, flush=True)
+    except Exception as e:
+        print("RENDER FAILED:", path, repr(e), flush=True)
+
+render_to(RENDER_BIG, 2048, 64)
+render_to(RENDER_SMALL, 512, 32)
 # restore big size tag in file (metadata only)
 scene.render.resolution_x = 2048
 scene.render.resolution_y = 2048

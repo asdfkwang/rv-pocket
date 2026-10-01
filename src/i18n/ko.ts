@@ -1,0 +1,75 @@
+import type { Translations } from "./en";
+
+export const ko: Translations = {
+  langToggleLabel: "EN/한",
+  episodeLabel: "에피소드",
+  prologue: "프롤로그",
+  episodeFmt: "에피소드 {n}",
+  resetEpisode: "에피소드 초기화",
+  docTitleFmt: "{label} — {title} | RV Pocket",
+
+  back: "← 뒤로",
+  ebook: "전자책",
+  terminal: "터미널",
+  station: "스테이션",
+  terminalView: "터미널",
+  ebookView: "전자책",
+
+  startEpisode01: "에피소드 01 시작",
+  gotIt: "알겠습니다",
+  guideFmt: "안내 {i} / {n}",
+  tourSkip: "건너뛰기",
+  tourNext: "다음",
+  tourDone: "완료",
+
+  prologueEyebrow: "프롤로그 / 옛 스튜디오",
+  episode01Eyebrow: "첫 수리 / 진단 접근",
+  benchFeedback: "벤치 피드백",
+
+  successNextEpisode: "첫 통신 성공. 다음 예정 수리: 에피소드 02 — 나쁜 메모리.",
+
+  routeNoticeUnavailable: "아직 준비되지 않은 에피소드입니다. 프롤로그로 돌아왔습니다.",
+  resetFeedback: "에피소드를 초기화했습니다. 같은 화면에서 새로 시작합니다.",
+  announceDismiss: "알겠습니다. 스테이션에 전자책과 터미널이 있습니다.",
+  announceTourDone: "안내를 마쳤습니다.",
+  announceCopyOk: "프롬프트를 복사했습니다. AI 어시스턴트에 붙여넣으세요.",
+  announceCopyFail: "복사에 실패했습니다. 프롬프트를 직접 선택해 복사하세요.",
+  announceViewFmt: "{label}: {title}. {view} 화면.",
+
+  tourEpisodesTitle: "에피소드",
+  tourEpisodesBody: "여기서 에피소드를 바꿉니다. 에피소드 하나가 수리 하나입니다.",
+  tourEbookTitle: "전자책",
+  tourEbookBody: "오래된 매뉴얼입니다. 이해가 안 될 때 여기를 확인하세요.",
+  tourTerminalTitle: "터미널",
+  tourTerminalBody: "기기와 대화하는 곳입니다.",
+  tourStartTitle: "에피소드 01 시작",
+  tourStartBody: "준비됐나요? 첫 수리를 시작합니다.",
+
+  stationEyebrow: "RV POCKET / 개발 유닛 001",
+  stationDeviceHeading: "기계.",
+  stationCaption: "전원이 켜져 있습니다. 화면은 계속 어두릅니다.",
+  stationUartCable: "UART 케이블",
+  stationConnected: "연결됨",
+
+  terminalEyebrow: "시리얼 터미널",
+  terminalHeading: "터미널.",
+  terminalEmpty: "지금은 비어 있습니다. 배선은 에피소드와 함께 옵니다.",
+
+  ebookForThisEpisode: "이 에피소드 추천",
+  ebookSearchLabel: "책 검색",
+  ebookSearchPlaceholder: "제목, 절, 또는 단어…",
+  ebookChaptersNav: "챕터",
+  ebookNoMatch: "일치하는 챕터가 없습니다.",
+  ebookWordmark: "RV POCKET 필드 전자책",
+  ebookCheckFmt: "체크 · {i} / {n}",
+  ebookCheckButton: "확인",
+  ebookHint: "힌트",
+  ebookPrev: "← 이전",
+  ebookNext: "다음 →",
+  ebookHarder: "더 어려운 문제를 원하나요? AI 프롬프트 복사",
+  ebookChoicesLabel: "선택지",
+  ebookCorrect: "정답입니다.",
+  ebookWrong: "아닙니다. 다시 시도해 보세요.",
+  ebookPromptFmt:
+    "RV POCKET 전자책 '{chapter}'을(를) 읽고 다음 문제를 풀었습니다: \"{question}\". 같은 개념으로 더 어려운 문제 3개를 만들어 주세요. 정답은 바로 주지 말고 힌트만 주세요.",
+};

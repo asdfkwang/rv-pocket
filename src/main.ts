@@ -1,16 +1,18 @@
-import { chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
+import { viewLabel, chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
+import { getLang, setLang, t, toggleLang } from "./i18n";
+import { chapterMission, chapterTitle } from "./chapters/locale";
 import { renderStation } from "./views/station";
 import { renderTerminal } from "./views/terminal";
 import { confirmCheck, getBookmarks, getCheckIndex, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/ebook";
-import { escapeHtml as e, viewLabels } from "./views/html";
+import { escapeHtml as e } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
 const tourSteps = [
-  { target: "chapter-select", title: "Episodes", body: "Switch episodes here. Each episode is one repair." },
-  { target: "open-ebook", title: "EBOOK", body: "The old manual. Check it whenever something is unclear." },
-  { target: "open-terminal", title: "TERMINAL", body: "Talk to the machine here." },
-  { target: "start-chapter", title: "Start Episode 01", body: "Ready? Begin the first repair." },
+  { target: "chapter-select", title: "tourEpisodesTitle", body: "tourEpisodesBody" },
+  { target: "open-ebook", title: "tourEbookTitle", body: "tourEbookBody" },
+  { target: "open-terminal", title: "tourTerminalTitle", body: "tourTerminalBody" },
+  { target: "start-chapter", title: "tourStartTitle", body: "tourStartBody" },
 ] as const;
 const initial = parseRoute(location.hash);
 let state = createAppState(initial.route);
@@ -25,29 +27,33 @@ function render() {
   const focusId = document.activeElement instanceof HTMLElement ? document.activeElement.id : "";
   const chapter = currentChapter(state);
   const complete = missionComplete(state);
-  document.title = `${chapter.id === 0 ? "Prologue" : `Episode ${String(chapter.id).padStart(2, "0")}`} — ${chapter.title} | RV Pocket`;
+  document.documentElement.lang = getLang();
+  document.title = t("docTitleFmt", {
+    label: chapter.id === 0 ? t("prologue") : t("episodeFmt", { n: String(chapter.id).padStart(2, "0") }),
+    title: chapterTitle(chapter),
+  });
   app.innerHTML = `<div class="app-shell">
-    ${state.view === "ebook" || state.view === "terminal" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>`}
+    ${state.view === "ebook" || state.view === "terminal" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">${e(t("episodeLabel"))}</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? t("prologue") : t("episodeFmt", { n: String(item.id).padStart(2, "0") })} — ${e(chapterTitle(item))}</option>`).join("")}</select></div><div class="top-bar-actions"><button id="reset-mission" class="reset-button" data-action="reset">${e(t("resetEpisode"))} <span aria-hidden="true">↺</span></button><button id="lang-toggle" class="reset-button" data-action="lang">${e(t("langToggleLabel"))}</button></div></div>`}
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
-      ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Episode 02 — Bad Memory.</p></div></section>` : ""}
-      ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
+      ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>${e(t("successNextEpisode"))}</p></div></section>` : ""}
+      ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">${e(t("benchFeedback"))}</span><p>${e(state.ui.feedback)}</p></div>` : ""}
       <div id="view-content">${state.view === "station" ? renderStation() : state.view === "terminal" ? renderTerminal() : renderEbook(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed && state.view === "station" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed && state.view === "station" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">${e(t("startEpisode01"))} <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
-      <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
-      <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
-      <p class="mission-observation">${e(chapter.mission.initialObservation)}</p>
-      <p><strong>${e(chapter.mission.summary)}</strong></p>
-      <button id="got-it" class="button primary" data-action="dismiss">Got it</button>
+      <span class="eyebrow">${e(chapter.id === 0 ? t("prologueEyebrow") : t("episode01Eyebrow"))}</span>
+      <h1 id="mission-title" tabindex="-1">${e(chapterTitle(chapter))}</h1>
+      <p class="mission-observation">${e(chapterMission(chapter).initialObservation)}</p>
+      <p><strong>${e(chapterMission(chapter).summary)}</strong></p>
+      <button id="got-it" class="button primary" data-action="dismiss">${e(t("gotIt"))}</button>
     </div></div>`}
   </div>`;
   const tour = state.active.id === 0 && state.ui.introDismissed && state.ui.tourStep !== null
     ? { ...tourSteps[state.ui.tourStep]!, index: state.ui.tourStep }
     : null;
   if (tour) {
-    app.insertAdjacentHTML("beforeend", `<div class="tour-card" role="status"><span class="eyebrow">GUIDE ${tour.index + 1} / ${tourSteps.length}</span><strong>${tour.title}</strong><p>${tour.body}</p><div class="tour-actions"><button id="tour-skip" class="text-button" data-action="tour-skip">Skip</button><button id="tour-next" class="button primary" data-action="tour-next">${tour.index === tourSteps.length - 1 ? "Done" : "Next"}</button></div></div>`);
+    app.insertAdjacentHTML("beforeend", `<div class="tour-card" role="status"><span class="eyebrow">${e(t("guideFmt", { i: tour.index + 1, n: tourSteps.length }))}</span><strong>${e(t(tour.title))}</strong><p>${e(t(tour.body))}</p><div class="tour-actions"><button id="tour-skip" class="text-button" data-action="tour-skip">${e(t("tourSkip"))}</button><button id="tour-next" class="button primary" data-action="tour-next">${e(t(tour.index === tourSteps.length - 1 ? "tourDone" : "tourNext"))}</button></div></div>`);
     document.getElementById(tour.target)?.classList.add("tour-spotlight");
   }
   const focusTarget = focusId ? document.getElementById(focusId) : null;
@@ -97,7 +103,11 @@ window.addEventListener("hashchange", () => {
   routeNotice = parsed.notice;
   canonicalizeRoute();
   render();
-  announce(routeNotice || `${state.active.id === 0 ? "Prologue" : `Episode ${state.active.id}`}: ${currentChapter(state).title}. ${viewLabels[state.view]} view.`);
+  announce(routeNotice || t("announceViewFmt", {
+    label: state.active.id === 0 ? t("prologue") : t("episodeFmt", { n: String(state.active.id).padStart(2, "0") }),
+    title: chapterTitle(currentChapter(state)),
+    view: viewLabel(state.view),
+  }));
 });
 
 app.addEventListener("click", (event) => {
@@ -109,6 +119,11 @@ app.addEventListener("click", (event) => {
       if (view) goTo(state.active.id, view);
       return;
     }
+    case "lang":
+      toggleLang();
+      render();
+      announce(`${getLang() === "ko" ? "한국어" : "English"}`);
+      return;
     case "start":
       if (state.active.id === 0) state.active.machine.started = true;
       goTo(1, state.view);
@@ -118,7 +133,7 @@ app.addEventListener("click", (event) => {
       if (state.active.id === 0) state.ui.tourStep = 0;
       render();
       document.getElementById("main-content")?.focus();
-      announce("Got it. EBOOK and Terminal on the station.");
+      announce(t("announceDismiss"));
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;
@@ -127,10 +142,10 @@ app.addEventListener("click", (event) => {
       render();
       if (state.ui.tourStep === null) {
         document.getElementById("main-content")?.focus();
-        announce("Guide done.");
+        announce(t("announceTourDone"));
       } else {
         document.getElementById("tour-next")?.focus();
-        announce(tourSteps[state.ui.tourStep]!.body);
+        announce(t(tourSteps[state.ui.tourStep]!.body));
       }
       return;
     }
@@ -156,11 +171,11 @@ app.addEventListener("click", (event) => {
       return;
     }
     case "check-confirm": {
-      const q = getCurrentCheck();
       confirmCheck();
       render();
       document.getElementById("check-question")?.focus();
-      if (q) announce(isCheckCorrect(q.answers, getCheckSelection().selected) ? "That's right." : "Not quite. Try again.");
+      const q = getCurrentCheck();
+      if (q) announce(isCheckCorrect(q.answers, getCheckSelection().selected) ? t("ebookCorrect") : t("ebookWrong"));
       return;
     }
     case "check-harder": {
@@ -168,13 +183,13 @@ app.addEventListener("click", (event) => {
       if (!q) return;
       const text = harderPrompt(getEbookTitle(), q.plain);
       copyText(text).then((ok) =>
-        announce(ok ? "Prompt copied. Paste it into your AI assistant." : "Copy failed. Select and copy the prompt manually."),
+        announce(ok ? t("announceCopyOk") : t("announceCopyFail")),
       );
       return;
     }
     case "reset":
       state = resetMission(state);
-      state.ui.feedback = "Episode reset. You are starting fresh in the same view.";
+      state.ui.feedback = t("resetFeedback");
       break;
     default: return;
   }
