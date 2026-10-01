@@ -200,9 +200,20 @@ body {
 
 .ebook-page h1 { margin: 4px 0 16px; }
 
-.ebook-sections { margin-bottom: 16px; }
-.ebook-sections ul { margin: 8px 0 0; padding-left: 20px; }
-.ebook-sections li { margin-bottom: 4px; }
+.check-progress { font-size: 0.85rem; color: var(--muted); }
+
+.check-question { margin: 12px 0; }
+.check-question:focus { outline: none; }
+
+.check-hint {
+  border: 1px solid var(--ink);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.check-hint summary { cursor: pointer; font-weight: 700; }
+
+.check-actions { display: flex; gap: 8px; margin: 12px 0; }
 
 .ebook-body pre {
   background: #111;

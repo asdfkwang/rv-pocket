@@ -2,7 +2,7 @@ import { chapters, createAppState, currentChapter, missionComplete, navigate, pa
 import { runDiagnostic, setUartConnection } from "./sim/uart";
 import { renderWorkbench } from "./views/workbench";
 import { renderComputer } from "./views/computer";
-import { getBookmarks, getEbookSlug, getEbookTitle, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery } from "./views/ebook";
+import { getBookmarks, getCheckIndex, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck } from "./views/ebook";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -58,6 +58,28 @@ function render() {
 }
 
 function announce(message: string) { announcement.textContent = message; }
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through to textarea fallback */ }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 function goTo(chapterId: ChapterId, view: View) {
   const hash = routeHash({ chapterId, view });
@@ -126,9 +148,21 @@ app.addEventListener("click", (event) => {
       announce(getEbookTitle());
       return;
     }
-    case "ebook-section": {
-      const target = button.dataset.target ?? "";
-      document.getElementById(target)?.scrollIntoView({ block: "start" });
+    case "check-prev":
+    case "check-next": {
+      const total = getCheckTotal();
+      stepCheck(button.dataset.action === "check-next" ? 1 : -1, total);
+      render();
+      document.getElementById("check-question")?.focus();
+      return;
+    }
+    case "check-harder": {
+      const q = getCurrentCheck();
+      if (!q) return;
+      const text = harderPrompt(getEbookTitle(), q.plain);
+      copyText(text).then((ok) =>
+        announce(ok ? "Prompt copied. Paste it into your AI assistant." : "Copy failed. Select and copy the prompt manually."),
+      );
       return;
     }
     case "inspect":

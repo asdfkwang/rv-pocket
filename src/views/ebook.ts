@@ -7,6 +7,7 @@ import { EBOOK_BOOKMARKS } from "../ebook-bookmarks";
 // the book is identical no matter which episode opens it.
 let ebookSlug: string | null = null;
 let ebookQuery = "";
+let checkIndex = 0;
 
 export function getEbookSlug(): string {
   return ebookSlug ?? EBOOK_CHAPTERS[0]!.slug;
@@ -19,6 +20,30 @@ export function getEbookTitle(): string {
 
 export function openEbookChapter(slug: string): void {
   if (EBOOK_CHAPTERS.some((ch) => ch.slug === slug)) ebookSlug = slug;
+  checkIndex = 0;
+}
+
+export function getCheckIndex(): number {
+  return checkIndex;
+}
+
+export function getCheckTotal(): number {
+  const ch = EBOOK_CHAPTERS.find((c) => c.slug === getEbookSlug());
+  return ch?.check.length ?? 0;
+}
+
+export function getCurrentCheck(): { html: string; plain: string; hintHtml: string | null } | null {
+  const ch = EBOOK_CHAPTERS.find((c) => c.slug === getEbookSlug());
+  return ch?.check[checkIndex] ?? null;
+}
+
+export function stepCheck(delta: number, total: number): void {
+  if (total <= 0) return;
+  checkIndex = (checkIndex + delta + total) % total;
+}
+
+export function harderPrompt(chapterTitle: string, questionPlain: string): string {
+  return `I'm reading RV Pocket EBOOK '${chapterTitle}' and worked on this question: "${questionPlain}". Give me 3 harder questions on the same concept. Don't give answers right away, only hints.`;
 }
 
 export function getEbookQuery(): string {
@@ -76,8 +101,21 @@ export function renderEbook(state: AppState): string {
     <article class="ebook-page" aria-labelledby="ebook-title">
       <span class="eyebrow">RV POCKET FIELD EBOOK</span>
       <h1 id="ebook-title" tabindex="-1">${e(ch.title)}</h1>
-      ${ch.headings.length ? `<nav class="ebook-sections" aria-label="On this page"><span class="eyebrow">ON THIS PAGE</span><ul>${ch.headings.map((h) => `<li><button class="text-button" data-action="ebook-section" data-target="${h.id}">${e(h.text)}</button></li>`).join("")}</ul></nav>` : ""}
       <div class="ebook-body">${body}</div>
+      ${ch.check.length ? `<section class="quiz-section" aria-labelledby="ebook-check-heading"><span class="eyebrow">CHECK · ${checkIndex + 1} / ${ch.check.length}</span>
+        <h2 id="ebook-check-heading">One question at a time.</h2>
+        ${ch.checkIntro}
+        ${(() => {
+          const q = ch.check[checkIndex]!;
+          return `<div id="check-question" class="check-question" tabindex="-1">${q.html}</div>
+          ${q.hintHtml ? `<details class="check-hint"><summary>Hint</summary>${q.hintHtml}</details>` : ""}
+          <div class="check-actions">
+            <button id="check-prev" class="button secondary" data-action="check-prev" ${ch.check.length < 2 ? "disabled" : ""}>← Prev</button>
+            <button id="check-next" class="button secondary" data-action="check-next" ${ch.check.length < 2 ? "disabled" : ""}>Next →</button>
+          </div>
+          <button id="check-harder" class="text-button" data-action="check-harder">Want harder questions? Copy an AI prompt <span aria-hidden="true">⧉</span></button>`;
+        })()}
+      </section>` : ""}
       ${episode.quiz.length ? `<section class="quiz-section" aria-labelledby="quiz-heading"><span class="eyebrow">EPISODE CHECK</span><h2 id="quiz-heading">Check your understanding.</h2><p class="muted">Questions for the current episode. Try again as often as you like, or return to the repair whenever you are ready.</p>
         ${episode.quiz.map((question, index) => {
           const selected = state.ui.quizAnswers[question.id];
