@@ -1,91 +1,86 @@
 # Chapter 05 — Instructions and the RISC-V ISA
 
-> **Part II — Speaking RISC-V**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part II — Speaking RISC-V**
 
-## Why This Matters
+## What makes a binary executable on a CPU?
 
-The same C program compiled for a laptop and for a RISC-V board produces completely different binaries — yet the RISC-V binary runs identically on a tiny microcontroller core and a big out-of-order core. That portability is not luck; it is the ISA contract at work. When a program crashes with "illegal instruction" on one board but runs fine on another, that contract is exactly what broke.
+Chapter 04 treated instructions as state transitions. An instruction set architecture, or ISA, specifies those transitions: which bit patterns are instructions, how operands are selected, and which results or exceptions follow. Assembly gives readable names to those encodings. The CPU executes the encoded bytes, not the source text or comments.
 
-## Core Idea
+RISC-V is a family of related instruction sets. RV32I and RV64I are different base integer ISAs; RV64 is not mandatory for every RISC-V processor. This book uses RV64I for its basic examples. Optional extensions add capabilities, such as integer multiplication with M and compressed instructions with C. A binary's requirements must match what the execution environment supports.
 
-An **ISA** (instruction set architecture) is a contract between software and hardware: it names the instructions and registers and fixes the exact result each instruction must produce. Any CPU claiming the name must produce the same register and memory results for the same binary, no matter how different its insides (pipeline depth, caches, speed).
+Matching the ISA is necessary but not sufficient for an entire application to run. It may also require an ABI, operating-system services, libraries, and suitable hardware. A bare-metal program that writes a board-specific device address is not made portable merely by using base instructions.
 
-RISC-V splits the contract into a small mandatory **base** (RV64I: 64-bit integer instructions every member implements) plus optional **extension** letters — M for multiply/divide, C for 2-byte compressed instructions, and others. Software must know which letters its CPU speaks.
+## From an encoding to a result
 
-## Worked Example
-
-Start state: `x5 = 0`, `x6 = 0`, `PC = 0x8000`. (`x0` always reads as zero, Chapter 04.)
+Consider `addi x5, x0, 10`. `addi` adds a signed constant encoded in the instruction to a register. The destination is x5, the source x0, and the immediate constant is 10. In the base encoding it occupies four bytes and has this field layout:
 
 ```text
-0x8000: addi x5, x0, 10    → x5 = 0 + 10 = 10, PC = 0x8004
-0x8004: addi x6, x0, 20    → x6 = 0 + 20 = 20, PC = 0x8008
-0x8008: add x7, x5, x6     → x7 = 10 + 20 = 30, PC = 0x800C
+ immediate    source  funct3 destination opcode
+000000001010   00000    000     00101    0010011
+      10         x0              x5
+
+instruction word: 0x00A00293
+little-endian bytes: 93 02 A0 00
 ```
 
-Track it: `addi` adds a constant baked into the instruction to a register. The first two instructions manufacture 10 and 20 out of nothing but `x0`. The third combines two registers into a third. Every instruction here is 4 bytes long, so the PC marches by 4.
+The layout tells the decoder where to find each field. The rule associated with the opcode and function field tells it to add, then write the result. Because x0 reads zero, the result is 10. The bytes in instruction memory do not change when the instruction runs.
 
-## The Same Idea Elsewhere
+Now execute three instructions:
 
-- **Hardware:** the decoder turns each 32-bit pattern into control signals, and two cores may decode the same bits with wildly different circuits yet commit identical register results.
-- **RISC-V:** RV64I is mandatory while letters like M and C are optional — portable code either avoids them or checks the core speaks them.
-- **OS:** the kernel executes the same base instructions but also uses extra privileged instructions and runs with memory mapped differently (the full story in Chapters 14 and 20).
-- **Linux/driver:** `-march` tells the compiler which extension letters it may emit, so a binary built for `rv64gc` can trap with illegal-instruction on a core that only speaks `rv64i`.
+```text
+8000: addi x5, x0, 10     x5 = 10; next PC = 8004
+8004: addi x6, x0, 20     x6 = 20; next PC = 8008
+8008: add  x7, x5, x6     x7 = 30; next PC = 800C
+```
 
-## When It Fails
+`add` gets both inputs from registers; `addi` gets one from an instruction field. This distinction explains why an immediate has a range limit while register arithmetic can produce much larger results. The addi immediate is a signed 12-bit value, from -2048 through 2047. A register containing 2047 plus immediate 1 produces 2048 without violating that encoding limit.
 
-A program using multiplication runs on the lab board but dies with "illegal instruction" on a smaller core. The tempting fix is to blame the toolchain and rebuild things at random — but the binary is fine; it speaks letter M and the small core never learned it. Match `-march` to the weakest core you ship on, or avoid the extension.
+## Width, extensions, and promises
+
+On RV64, `addi x5, x0, -1` produces the 64-bit pattern `0xFFFFFFFFFFFFFFFF`. The immediate is sign-extended before addition. Integer additions retain the register-width result; base integer add instructions do not trap simply because the mathematical sum overflows that width.
+
+If a binary uses an unsupported encoding, the execution environment may raise an illegal-instruction exception or provide emulation. A `mul` instruction requires multiplication support, which may come from M or the multiplication-only Zmmul extension. "No M" alone is therefore insufficient evidence that mul is unsupported. State the precise instruction requirements rather than guessing from one missing extension name.
+
+Two conforming cores need not take the same number of cycles. For a deterministic sequence with the same initial state, supported instructions, and no external interference, the specified arithmetic results must agree. Timing, counters, device inputs, and concurrent memory activity require additional assumptions.
+
+## Read assembly without confusing its conveniences
+
+Assemblers offer pseudoinstructions that expand into real instructions. `li` means load an immediate, but loading an arbitrary 64-bit constant may require several instructions. `ret` commonly expands to a jump through the return-address register. A source listing therefore does not always reveal instruction count or byte length.
+
+When debugging a binary, inspect its disassembly and the selected architecture options. Record which instructions actually appear, whether compressed encodings are used, and which execution environment supplies services. Chapter 06 uses the same distinction between notation and semantics to follow memory accesses.
 
 ## Check
 
-1. On RV64, the CPU runs `addi x5, x0, -1`. What does `x5` hold afterwards?
-   - A) `0x0000000000000001`
-   - B) `0xFFFFFFFFFFFFFFFF`
-   - C) `0x00000000FFFFFFFF`
-   - D) `0`, because adding to `x0` poisons the result
-   - Answer: B
-   - Explanation: The 12-bit immediate `-1` is sign-extended to 64 one-bits (two's complement, Chapter 02), and `x0` contributes 0. C is the 32-bit truncation; D misunderstands `x0`, which reads as zero but never corrupts the sum.
-   > Hint: How wide is a register on RV64, and what does sign extension do to twelve 1-bits?
-
-2. Two very different RV64I CPUs — one simple, one wide and out-of-order — run the same binary to completion with no traps. Which of these must match? Pick all that apply.
-   - A) The final values in the `x` registers
-   - B) The final bytes the program stored to memory
-   - C) The number of clock cycles the run took
-   - D) The contents of each core's caches
-   - Answer: A, B
-   - Explanation: The ISA contract fixes architectural results — registers and memory (A, B). Timing and microarchitectural state like caches are deliberately outside the contract, so C and D may differ freely.
-   > Hint: Which of these could a program itself observe without a stopwatch or a probe?
-
-3. A binary containing `mul` runs on a CPU built without the M extension. What happens?
-   - A) The CPU computes the product anyway, just more slowly
-   - B) The CPU raises an illegal-instruction trap
-   - C) `x7` keeps its old value and execution continues silently
-   - D) The assembler rewrites `mul` into shifts and adds at run time
-   - Answer: B
-   - Explanation: With no M circuits the decoder cannot honor the contract for that bit pattern, so the CPU takes the defined escape hatch: a forced jump to a handler (a trap, Chapter 13). A is wishful thinking, C would silently corrupt results, and D confuses build time with run time — nothing rewrites already-built machine code.
-   > Hint: What is the one legal thing hardware can do with a bit pattern it does not implement?
-
-4. A CPU with the C extension executes a 2-byte instruction at `0x8000` and falls through. What does the PC hold next?
-   - A) `0x8002`
-   - B) `0x8004`
-   - C) `0x8000`
-   - D) `0x8001`
+1. With x6 = 2047, what happens after `addi x6, x6, 1` on RV64?
+   - A) x6 becomes 2048.
+   - B) The immediate is out of range.
+   - C) Integer overflow necessarily traps.
    - Answer: A
-   - Explanation: The PC advances by the length of the instruction that just ran. Chapter 04's "+4" assumed 4-byte instructions; a 2-byte instruction at `0x8000` ends at `0x8002`. D is never a code address — instructions stay 2-byte aligned.
-   > Hint: PC + 4 is the common case, not the rule. How long was this instruction?
+   - Explanation: The encoded immediate is 1; the register result is not limited to a signed 12-bit value.
 
-5. Open the RISC-V unprivileged ISA specification: what is the numeric range of an `addi` immediate, and why can `addi x6, x6, 1` still produce 2048 when `x6` already holds 2047? Show both instructions' arithmetic.
+2. Which claims are justified? Select all that apply.
+   - A) Identical ISA support guarantees identical execution time.
+   - B) A board-specific device address is outside the base integer ISA contract.
+   - C) A pseudoinstruction can expand to multiple instructions.
+   - Answer: B, C
+   - Explanation: The ISA specifies behavior, while timing, platform devices, and assembler expansions are separate questions.
+
+3. Starting from `0x00A00293`, identify the destination field and change only it to select x6. Show the new word and its little-endian byte sequence.
+
+4. Design a compatibility checklist for a binary using RV64 integer instructions, mul, compressed instructions, and Linux system calls. Explain why checking only the processor's XLEN is insufficient.
+
+5. Research challenge: find the specification's result for signed integer division by zero when the relevant division extension is present. Contrast it with an unsupported divide instruction. Explain why a high-level language's division error does not by itself tell you the hardware trap cause.
 
 ## Limits
 
-This chapter treats each ISA letter as all-or-nothing. Real cores implement extensions with version skew, immediates have fixed bit widths with sign rules, and the privileged architecture adds instructions user code never sees (Chapters 13–14). The specification in Go Deeper is the final word.
+The example illustrates one base instruction format, not every encoding. Privilege, ABI, and device contracts appear separately later. We use four-byte instructions in hand traces unless a compressed instruction is explicitly identified.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [RISC-V psABI](https://github.com/riscv-non-isa/riscv-elf-psabi-doc)
+- [RISC-V base integer instruction formats](https://docs.riscv.org/reference/isa/unpriv/rv32.html) — verify the addi fields and immediate interpretation.
+- [RISC-V multiplication and division](https://docs.riscv.org/reference/isa/unpriv/m-st-ext.html) — compare M, Zmmul, and division corner cases.
 
 ## Related
 
-Chapter 04, Chapter 06
+- [Chapter 04 — Inside the CPU](04_inside_the_cpu.md)
+- [Chapter 06 — Loads, Stores, and Pointers](06_loads_stores_and_pointers.md)

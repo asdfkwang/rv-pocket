@@ -1,91 +1,76 @@
 # Chapter 24 — Reset, Firmware, and Boot
 
-> **Part VI — How Linux Finds Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VI — How Linux Finds Hardware**
 
-## Why This Matters
+## Who prepares the machine before the kernel?
 
-When power is applied, the CPU starts executing at a fixed address — the **reset vector**. The first code that runs is **firmware**: it initializes memory, finds the bootloader or kernel, and hands control to the OS. Without firmware, the hardware is inert. Understanding boot is understanding who owns the machine at each stage.
+The previous chapters assumed a running CPU, usable memory, and configured trap handling. At reset, those assumptions have to be established. Firmware is early software that brings the platform into a state suitable for the next stage. The exact reset address and sequence are platform-defined; the RISC-V ISA alone does not specify one universal board boot path.
 
-## Core Idea
+A boot ROM may select storage, authenticate or load another image, and transfer control to writable firmware. Further stages may initialize DRAM, select a kernel, and supply platform information. Some of these steps can be combined. To debug boot, record the actual chain rather than assigning a mandatory job to each familiar firmware name.
 
-Boot is a chain of handoffs: firmware → bootloader → kernel → init. Each stage sets up more of the system and passes control to the next. The firmware runs in M-mode (most privileged), initializes DRAM and essential devices, loads the kernel into memory, and jumps to it. The kernel takes over, initializes drivers, and starts the first user process.
+## Track ownership across a concrete handoff
 
-## Worked Example
+Use a conceptual RV64 Linux boot in which firmware has usable DRAM, loads a kernel image at an appropriate physical address, and prepares a flattened device tree. The handoff contract includes the boot hart identifier in a0 and the device-tree physical address in a1 for the documented entry path. A hart is a hardware thread of execution, not a Linux process.
 
 ```text
-1. Power on
-2. CPU starts at reset vector (e.g., 0x1000)
-3. Firmware (M-mode) runs:
-     - initialize DRAM
-     - initialize UART (for debug output)
-     - load kernel from storage to RAM
-     - jump to kernel entry
-4. Kernel (S-mode) runs:
-     - initialize page tables
-     - initialize drivers
-     - mount root filesystem
-     - start init process
-5. Init (U-mode) runs:
-     - start system services
-     - present login prompt
+reset entry
+  -> early firmware establishes essential platform state
+  -> loader places kernel and description in non-overlapping RAM regions
+  -> firmware enters the kernel under the documented register/mode contract
+  -> kernel establishes its own stacks, traps, mappings, and allocators
+  -> kernel discovers devices and starts userspace
 ```
 
-Each stage is more complex than the last. The firmware is small and hardware-specific; the kernel is large and portable.
+Suppose the description occupies `[0x88000000, 0x88008000)`. The kernel's entry a1 points to `0x88000000`. If the loader places another image over that interval after preparing it, a correct-looking a1 still points to corrupted data. Handoff correctness depends on object lifetime and contents as well as register values.
 
-## The Same Idea Elsewhere
+Likewise, a kernel loaded at an address must satisfy the architecture's image alignment and reserved-memory requirements. The page-table and stack setup cannot safely overwrite memory still needed by firmware, the description, or another boot artifact. Draw a physical-memory map at handoff with every live region.
 
-- **Hardware:** the reset vector is a fixed address. The CPU's first instruction is fetched from there.
-- **RISC-V:** the privileged spec defines the reset behavior and the CSRs that firmware configures.
-- **OS:** the kernel is the second stage. It assumes firmware has done minimal setup (DRAM, UART).
-- **Linux/driver:** drivers are initialized by the kernel after boot. A driver's probe function runs when the kernel finds a matching device.
+## The first kernel instruction is another boundary
 
-## When It Fails
+The documented RISC-V kernel entry requirements include the expected translation and interrupt state for the chosen boot method. A loader must not guess them from another architecture or from a kernel already running under virtual memory. For the conventional documented entry, satp is zero and supervisor interrupts are disabled; consult the current boot requirements for the full contract.
 
-The firmware initializes DRAM but forgets to set the memory size in the device tree. The kernel reads the device tree, sees zero available memory, and panics. The bug is not the kernel — it is the firmware's incomplete hardware description. The fix: firmware must describe the hardware accurately.
+A jump into the image proves only that control was transferred. The next instruction fetch, early stack access, or mapping transition can fail before an ordinary console exists. A blank screen therefore does not uniquely mean the jump failed. Early serial output, a debugger, or another hardware observation may be required to locate the last confirmed stage.
+
+## Debug from the last reliable observation
+
+Suppose firmware prints "loading kernel" and then becomes silent. That message precedes several possible boundaries: storage read completion, image validation/decompression, memory placement, and entry transfer. Instrumenting a marker immediately before the transfer distinguishes loading failures from later failures. A marker at a known kernel entry point narrows the boundary again.
+
+Do not infer that DRAM is fully correct from one firmware print: firmware may execute from ROM and use only a small memory region. Similarly, a working firmware UART configuration does not guarantee the kernel's chosen console path is configured. Chapter 40 separates these milestones in a complete boot investigation.
+
+Chapter 25 now examines the firmware services that remain available after Linux starts. Firmware is not always finished merely because the kernel has taken over the normal instruction stream.
 
 ## Check
 
-1. The CPU is reset. Where does it start executing?
-   - A) At address 0x00000000
-   - B) At the reset vector (a fixed address defined by the platform)
-   - C) At the kernel entry point
-   - D) At the first instruction of the firmware's data section
-   - Answer: B
-   - Explanation: The reset vector is a fixed address. The CPU's first fetch is from there. The firmware is typically placed at the reset vector.
-   > Hint: What is the first thing the CPU does after reset? Where does it look?
+1. The loader passes a correct device-tree pointer, then overwrites the pointed-to bytes. Which handoff condition has failed?
+   - A) The lifetime/content of the handed-off object
+   - B) Only the printed pointer notation
+   - C) The requirement that every RISC-V board use one reset address
+   - Answer: A
+   - Explanation: A correct address does not establish that the referenced object remains valid.
 
-2. Which of these are firmware responsibilities? Pick all that apply.
-   - A) Initialize DRAM
-   - B) Load the kernel into memory
-   - C) Initialize all device drivers
-   - D) Jump to the kernel entry point
-   - Answer: A, B, D
-   - Explanation: Firmware initializes essential hardware (DRAM), loads the kernel, and jumps to it. Device drivers are the kernel's job, not firmware's.
-   > Hint: What does the kernel need before it can run? What is the kernel's job?
+2. Which are platform or boot-contract questions? Select all that apply.
+   - A) The reset entry location
+   - B) Required kernel-entry register state
+   - C) Whether a particular boot stage initialized DRAM
+   - Answer: A, B, C
+   - Explanation: The actual platform and selected entry protocol establish these facts.
 
-3. The kernel starts but panics with "no memory available." The firmware initialized DRAM correctly. What is the most likely cause?
-   - A) The kernel is corrupted
-   - B) The firmware did not describe the memory in the device tree
-   - C) The CPU is too slow
-   - D) The UART is not initialized
-   - Answer: B
-   - Explanation: The kernel learns about memory from the device tree. If the firmware does not describe it, the kernel sees no memory.
-   > Hint: How does the kernel know how much memory exists? Who tells it?
+3. Draw a physical-memory layout containing a kernel image, device tree, initramfs, firmware-reserved region, and early stack. Identify two overlap failures and when each would become visible.
 
-4. Explain the handoff from firmware to kernel — what state does the firmware set up, and what does the kernel assume is already done?
+4. Firmware's final print appears, but the kernel console does not. Propose a sequence of observations distinguishing image loading, entry transfer, early memory access, and console configuration. Do not assume one test distinguishes every cause.
 
-5. A board boots to firmware but never reaches the kernel. The firmware prints "loading kernel" and then stops. List three possible causes and the one test that would distinguish them.
+5. Research challenge: read the RISC-V Linux boot requirements and record the version examined. Extract the alignment, register, translation, and interrupt conditions for a chosen entry method, then compare them with a specific firmware handoff.
 
 ## Limits
 
-This chapter shows a simple boot chain. Real systems have secure boot (verified signatures), multiple firmware stages (ROM → SPL → U-Boot), and complex storage (eMMC, NVMe). The principle — a chain of handoffs from firmware to kernel — is the same.
+The chain is conceptual; real systems use different loaders, firmware, and security policies. The kernel handoff must follow the selected protocol, including EFI-specific behavior if applicable. Example RAM addresses illustrate non-overlap, not a universal board layout.
 
 ## Go Deeper
 
-- [RISC-V Boot Protocol](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Boot](https://docs.kernel.org/admin-guide/boot.html)
+- [RISC-V Linux boot requirements](https://docs.kernel.org/arch/riscv/boot.html) — use the actual entry contract for the handoff exercise.
+- [OpenSBI firmware documentation](https://github.com/riscv-software-src/opensbi/tree/master/docs/firmware) — compare firmware integration and payload arrangements.
 
 ## Related
 
-Chapter 23, Chapter 25
+- [Chapter 23 — Cache Coherency, DMA, and Memory Ordering](23_cache_coherency_dma_and_memory_ordering.md)
+- [Chapter 25 — SBI and the Boundary Below Linux](25_sbi_and_the_boundary_below_linux.md)

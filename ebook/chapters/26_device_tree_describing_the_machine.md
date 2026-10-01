@@ -1,86 +1,98 @@
 # Chapter 26 — Device Tree: Describing the Machine
 
-> **Part VI — How Linux Finds Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VI — How Linux Finds Hardware**
 
-## Why This Matters
+## How does Linux learn where hardware is?
 
-The kernel is one binary that runs on many boards. Each board has different memory maps, different devices, different interrupt numbers. The **Device Tree** is a data structure that describes the hardware to the kernel. Without it, the kernel would need a different build for every board.
+The kernel cannot generally discover a simple memory-mapped peripheral by reading arbitrary addresses until something responds. Some buses support enumeration; many on-chip devices need a firmware-provided description. A device tree describes hardware nodes, resources, and relationships so software can instantiate suitable device objects.
 
-## Core Idea
+The description is data, not code that initializes every device. A correct node does not enable a clock, clear a reset, or guarantee a driver exists. It supplies information that the kernel and drivers interpret through documented bindings.
 
-A Device Tree is a tree of nodes. Each node describes a device or a bus. Nodes have properties (key-value pairs) that describe the device: registers (address ranges), interrupts, clocks, and compatible strings. The kernel reads the device tree at boot, matches drivers to devices via compatible strings, and initializes drivers with the described resources.
+## Decode one fictional node completely
 
-## Worked Example
+This illustrative tree describes the teaching UART. Its invented compatible string requires a matching teaching driver and binding; it is not an existing Linux UART binding.
 
 ```dts
 / {
+    #address-cells = <2>;
+    #size-cells = <2>;
     soc {
-        uart0: serial@10000000 {
-            compatible = "ns16550a";
+        compatible = "simple-bus";
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        uart@10000000 {
+            compatible = "rvpocket,teaching-uart";
             reg = <0x0 0x10000000 0x0 0x1000>;
-            interrupts = <1>;
-            clock-frequency = <11520000>;
+            status = "okay";
         };
     };
 };
 ```
 
-The kernel finds the `serial@10000000` node, matches the `ns16550a` compatible string to a UART driver, and passes the register range and interrupt number to the driver's probe function.
+The parent's address/size cell counts determine how to split reg. Each cell is 32 bits. The first two cells form address `0x0000000010000000`; the next two form size `0x0000000000001000`. The half-open interval is `[0x10000000, 0x10001000)`. Its last included byte is `0x10000FFF`, matching Chapter 09.
 
-## The Same Idea Elsewhere
+The empty ranges property declares identity translation between this bus and its parent. On another bus, ranges can translate child addresses into different parent addresses. Therefore a child's reg value need not be a CPU physical address before parent translation. Omitting ranges is not universally equivalent to explicitly declaring identity translation.
 
-- **Hardware:** the device tree is a description, not hardware. It is stored in memory (loaded by firmware) and read by the kernel.
-- **RISC-V:** the device tree is the standard hardware description for RISC-V. Firmware creates it or passes a pre-built one.
-- **OS:** the kernel parses the device tree at boot and creates platform devices from it.
-- **Linux/driver:** a driver declares which compatible strings it supports. The kernel matches and calls probe.
+The unit address after `@` identifies the node's address in the tree convention. It is not a replacement for reg. The compatible string identifies the programming model software can match; it is not merely a human-readable product name.
 
-## When It Fails
+## From a node to a probe attempt
 
-The device tree says the UART is at `0x10000000` but the hardware designer moved it to `0x20000000`. The kernel probes the driver with the wrong address. The driver reads garbage. The bug is not the driver — it is the device tree's inaccurate description. The fix: correct the device tree.
+On the appropriate populated bus, Linux creates a device representation with translated resources. The bus's matching rules compare it with registered drivers. A match allows a probe attempt, where the driver acquires resources and initializes state. Matching is not the same as successful initialization.
+
+```text
+firmware description
+    -> bus/device population
+    -> compatible match with available driver
+    -> probe receives resources
+    -> initialization succeeds or reports a failure/defer condition
+```
+
+The teaching fragment omits interrupts, clocks, resets, and pins because their provider bindings must be specified before their cells can be interpreted. Adding an arbitrary `interrupts = <5>` would not be self-explanatory: the interrupt parent's #interrupt-cells and binding determine what the cells mean. Chapter 28 discusses resources and dependencies acquired during probe.
+
+## Diagnose a described but inactive device
+
+Suppose the node is present and enabled, but the device is unusable. Confirm that the relevant bus populated it, that a suitable driver is available and matched, and that probe ran successfully. If probe deferred because a clock provider was not ready, changing the MMIO address is unlikely to help.
+
+Conversely, successful probe does not prove every description is correct. A wrong register size or interrupt route may remain latent until an operation accesses the missing region or waits for completion. Validate both the binding's structure and the board's actual wiring.
+
+Schemas catch many malformed properties, but cannot prove that a physical wire goes to the declared pin or that the board designer used the expected clock. Treat the description as a claim to test against platform evidence.
+
+The next chapter follows the matched driver as a set of callbacks and lifetimes rather than as a program with one main function.
 
 ## Check
 
-1. A device tree node has `compatible = "ns16550a"`. What does the kernel do with this?
-   - A) Load the ns16550a driver and call its probe function
-   - B) Ignore it — compatible strings are informational
-   - C) Use it to set the device's clock frequency
-   - D) Write it to the kernel log
-   - Answer: A
-   - Explanation: The compatible string is how the kernel matches a driver to a device. When a match is found, the driver's probe function is called.
-   > Hint: How does the kernel know which driver to use for a device?
+1. What is the last byte of the example's resource range?
+   - A) `0x10001000`
+   - B) `0x10000FFF`
+   - C) `0x10000004`
+   - Answer: B
+   - Explanation: The size is 0x1000 bytes; the half-open end is one past the final byte.
 
-2. Which of these are device tree properties? Pick all that apply.
-   - A) reg (register address range)
-   - B) interrupts (interrupt number)
-   - C) compatible (driver match string)
-   - D) speed (device clock speed)
-   - Answer: A, B, C
-   - Explanation: reg, interrupts, and compatible are standard device tree properties. speed is not a standard property (clock-frequency is).
-   > Hint: What does the kernel need to know about a device? Address, interrupt, and driver.
+2. Which statements are correct? Select all that apply.
+   - A) The parent defines how many cells encode the child's address and size.
+   - B) A compatible match proves the hardware has finished initialization.
+   - C) A bus can translate a child's address through ranges.
+   - Answer: A, C
+   - Explanation: Resource decoding and driver initialization are separate stages.
 
-3. The kernel boots but a device is not initialized. The device tree node exists with the correct compatible string. What is the most likely cause?
-   - A) The driver is not compiled into the kernel
-   - B) The device tree is corrupted
-   - C) The kernel does not support device trees
-   - D) The device is not powered
-   - Answer: A
-   - Explanation: If the driver is not available, the kernel cannot match the compatible string. The device is described but no driver claims it.
-   > Hint: The kernel has the description. What else does it need to initialize the device?
+3. Change the parent to one address cell and one size cell. Rewrite reg for the same range and explain why retaining the original four cells changes its interpretation.
 
-4. Explain why the device tree is a better approach than hard-coding hardware descriptions in the kernel — what problems does it solve?
+4. Design an investigation for a node present in the live tree but with no working device. Include population, matching, probe, dependency, and resource evidence without assuming the first plausible cause is proven.
 
-5. A device tree describes a device at address 0x10000000 with size 0x1000. The driver probes successfully but reads garbage. List three possible causes and the one register read that would distinguish them.
+5. Research challenge: select a real UART binding schema. Decode its interrupt, clock, and reset properties using the provider bindings. Compare its required register layout with the fictional map and explain why sharing the word UART is not enough for compatibility.
 
 ## Limits
 
-This chapter shows a simple device tree. Real device trees are large, with nested buses (PCIe, USB), power domains, and clock trees. The principle — describe hardware in data, match drivers by compatible string — is the same.
+The DTS is an explanatory fragment for fictional hardware, not a complete deployable board description. Linux also supports hardware discovery through other mechanisms, including ACPI and enumerable buses. Binding schemas and provider relationships determine real property meanings.
 
 ## Go Deeper
 
-- [Devicetree Specification](https://devicetree-specification.readthedocs.io/)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
+- [Devicetree basic structure and properties](https://devicetree-specification.readthedocs.io/en/stable/devicetree-basics.html) — inspect reg, ranges, and parent cell counts.
+- [Linux Devicetree usage model](https://docs.kernel.org/devicetree/usage-model.html) — follow device population and matching.
+- [Linux Devicetree bindings](https://github.com/torvalds/linux/tree/master/Documentation/devicetree/bindings) — choose a concrete schema for the research task.
 
 ## Related
 
-Chapter 25, Chapter 27
+- [Chapter 25 — SBI and the Boundary Below Linux](25_sbi_and_the_boundary_below_linux.md)
+- [Chapter 27 — What a Linux Device Driver Is](27_what_a_linux_device_driver_is.md)

@@ -1,80 +1,84 @@
 # Chapter 17 — Threads and Scheduling
 
-> **Part IV — Protection and the Operating System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part IV — Protection and the Operating System**
 
-## Why This Matters
+## What does a second thread share?
 
-A process is heavy: its own address space, its own files, its own everything. **Threads** are lighter: multiple execution streams within one process, sharing memory and files. Threads make parallelism easier, but they also make bugs easier — shared memory means shared state, and shared state means races.
+Chapter 16 explained switching one execution stream for another. A process can contain several threads that share an address space and process resources while each retains its own execution registers and stack. Sharing reduces the need to copy or explicitly exchange data, but it makes one thread's writes visible to code that may execute at an inconvenient time.
 
-## Core Idea
+A stack belongs to one thread by convention and lifetime management; it is not generally protected from other threads in the same address space. Passing a pointer to a stack object can let another thread access it. The object's lifetime and synchronization remain the program's responsibility.
 
-A thread is like a process, but it shares the address space with other threads in the same process. Each thread has its own stack and registers, but they all see the same global variables. The **scheduler** decides which thread runs when. It uses a **time slice** (quantum): each thread runs for a short time, then the scheduler picks another.
+## Follow runnable, running, and blocked states
 
-## Worked Example
+Consider threads A and B on one CPU. A parses input; B waits for a device result. Running means currently using the CPU. Runnable means eligible to execute when selected. Blocked means waiting for a condition or event rather than competing for CPU time.
 
-Two threads in one process:
+| Event | A | B | CPU |
+| --- | --- | --- | --- |
+| Initial state | running | blocked on result | A |
+| Device result arrives | running | becomes runnable | A or interrupt service |
+| Scheduler selects B | runnable | running | B |
+| B consumes result, waits again | runnable | blocked | A can resume |
+
+Waking B changes its eligibility. It does not guarantee immediate execution or transfer the CPU to B at the exact instant the device finishes. This distinction becomes essential when measuring I/O latency: device completion, wakeup, and actual scheduling are separate timestamps.
+
+A scheduler considers runnable work according to its policy, priorities, and CPU eligibility. An expired time allocation can trigger reconsideration, but the kernel need not choose another thread if none is eligible or policy says otherwise. Linux has multiple scheduling classes; "every thread gets exactly 10 ms" is not a general description.
+
+## Sharing exposes intermediate states
+
+Suppose A and B increment a shared counter initially zero. At the machine-operation level, each increment can be modeled as load, add one, store. A possible interleaving is:
 
 ```text
-Thread 1: while (true) { x = x + 1; }
-Thread 2: while (true) { x = x + 1; }
+A loads 0
+B loads 0
+A computes 1 and stores 1
+B computes 1 and stores 1
+final counter: 1, despite two requested increments
 ```
 
-Both threads increment the same variable `x`. The scheduler switches between them. If the switch happens between the read and write of `x`, one increment is lost. This is a **race condition**: the result depends on the timing of the switch.
+The interleaving illustrates a lost update. In C, unsynchronized conflicting accesses to an ordinary shared variable can constitute a data race and undefined behavior, so the table is not an exhaustive prediction of all compiled outcomes. Use language-level atomics or suitable synchronization to establish a legal program first.
 
-## The Same Idea Elsewhere
+The scheduler did not promise to keep the multi-instruction increment indivisible. Even on one CPU, preemption can interleave the operations. On multiple CPUs, they can overlap physically. Reducing a time slice or hoping an operation is "fast enough" does not provide a synchronization guarantee.
 
-- **Hardware:** the CPU provides the timer interrupt that triggers the scheduler, and the context switch mechanism (Chapter 16).
-- **RISC-V:** the privileged spec defines the timer and trap mechanism.
-- **OS:** the OS scheduler uses these mechanisms to implement scheduling policies (round-robin, priority, etc.).
-- **Linux/driver:** a driver that handles interrupts must be thread-safe. If two threads call the driver concurrently, the driver's state can be corrupted.
+## Responsiveness is not only CPU speed
 
-## When It Fails
+Imagine B is a high-priority consumer waiting for a mutex owned by low-priority A. Unrelated runnable work can delay A and indirectly delay B. This is priority inversion; supported priority-inheritance mechanisms can help by allowing the owner to run with appropriate effective priority while needed.
 
-Two threads increment a counter without a lock. The increment is `read x, add 1, write x`. If the switch happens after the read but before the write, the other thread's increment is lost. The final value is less than expected. The fix: use a lock or an atomic operation to make the increment indivisible.
+Do not label every blocked thread a deadlock. A thread waiting for a device that will complete is ordinary blocking. A thread waiting for a lock whose owner will resume is ordinary contention. Investigate whether progress is possible, what condition enables it, and whether the responsible producer can run.
+
+Chapter 18 turns these observations into synchronization choices: what must be indivisible, which contexts can sleep, and how to avoid circular waits.
 
 ## Check
 
-1. Two threads share a global variable. Both increment it without a lock. What is the most likely outcome?
-   - A) The variable is always correct
-   - B) The variable may be less than expected due to lost updates
-   - C) The variable is always zero
-   - D) The program crashes immediately
+1. A device wakes blocked B while A is executing. What is necessarily established by a successful wakeup of B?
+   - A) B immediately owns the CPU.
+   - B) B becomes eligible to run.
+   - C) B has already consumed the result.
    - Answer: B
-   - Explanation: Without a lock, the read-modify-write sequence can interleave, causing lost updates. The result is non-deterministic.
-   > Hint: What happens if the switch occurs between the read and the write?
+   - Explanation: Wakeup changes scheduling state; execution and consumption happen later.
 
-2. Which of these do threads in the same process share? Pick all that apply.
-   - A) Global variables
-   - B) The stack
-   - C) Open file descriptors
-   - D) The heap
-   - Answer: A, C, D
-   - Explanation: Threads share the address space: globals, heap, and file descriptors. Each thread has its own stack.
-   > Hint: What is per-thread? What is per-process?
+2. Which are normally distinct per thread? Select all that apply.
+   - A) Execution registers
+   - B) Stack allocation
+   - C) The entire process address space
+   - Answer: A, B
+   - Explanation: Threads in the same process share the address space, which can include each other's stacks.
 
-3. A scheduler uses a time slice of 10ms. What happens when a thread's time slice expires?
-   - A) The thread is killed
-   - B) The thread is switched out and another thread runs
-   - C) The thread continues running
-   - D) The thread is moved to a lower priority
-   - Answer: B
-   - Explanation: When the time slice expires, the timer interrupt fires, the scheduler runs, and a different thread is selected. The first thread is saved and will run again later.
-   > Hint: What triggers the scheduler? What does it do?
+3. Add timestamps to device completion, wakeup, scheduling, and consumption. Construct a 20 ms application delay even though the device completed in 1 ms. Identify where measurements must be taken to find the extra delay.
 
-4. Explain why threads are lighter than processes — what is shared, and what is the cost of that sharing?
+4. Explain why making a C counter volatile does not repair the shared increment. Give one appropriate atomic operation and one lock-based design, stating the invariant each protects.
 
-5. A thread acquires a lock and then blocks on I/O. What happens to other threads that need the same lock, and what is this situation called?
+5. Research challenge: choose one documented Linux scheduling policy. Describe when a runnable thread can be selected and identify why a fixed universal time-slice explanation would be inaccurate for that policy.
 
 ## Limits
 
-This chapter shows a simple scheduler. Real schedulers have priorities, affinity (pinning threads to cores), and complex policies (CFS in Linux). The principle — time-sliced scheduling with context switches — is the same.
+The state table omits stopped, exiting, and other detailed kernel states. Scheduling behavior depends on policy and configuration. The counter example illustrates a machine-level race; language rules are part of the correctness contract, not an optional refinement.
 
 ## Go Deeper
 
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Threads](https://docs.kernel.org/process/)
+- [Linux scheduler documentation](https://docs.kernel.org/scheduler/) — select a scheduling policy and inspect its actual rules.
+- [Priority inheritance and RT mutexes](https://docs.kernel.org/locking/rt-mutex.html) — follow the dependency between a waiting task and the lock owner.
 
 ## Related
 
-Chapter 16, Chapter 18
+- [Chapter 16 — Processes and Context Switching](16_processes_and_context_switching.md)
+- [Chapter 18 — Concurrency and Synchronization](18_concurrency_and_synchronization.md)

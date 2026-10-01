@@ -1,89 +1,86 @@
 # Chapter 20 — Virtual Memory and Sv39
 
-> **Part V — Memory Becomes Virtual**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part V — Memory Becomes Virtual**
 
-## Why This Matters
+## How can two programs use the same address?
 
-Without virtual memory, every program must fit in physical memory, and one program can corrupt another. **Virtual memory** gives each program its own address space — a private, contiguous range of addresses that the hardware maps to physical memory. The mapping is done by the **MMU** (Memory Management Unit) using **page tables**.
+Chapter 16 left an important mechanism hidden: process A and process B can both refer to virtual address `0x40403123` while reaching different physical memory. Virtual memory translates the address used by an instruction and checks permissions. It does not require each process's physical pages to be contiguous.
 
-## Core Idea
+A page is a fixed-size region for mapping and protection. We begin with 4 KB pages, so the low 12 address bits are the offset within a page. Translation changes the page number while retaining that offset. A page table records the mapping; the memory-management unit, or MMU, consults it when an applicable translation is not already cached.
 
-Virtual memory divides address space into **pages** (typically 4 KB). Each virtual page maps to a physical page. The mapping is stored in a **page table** — a tree of tables. Sv39 is RISC-V's 39-bit virtual address scheme: 3 levels of page tables, 4 KB pages, 512 entries per table. The MMU walks the table to translate a virtual address to a physical one.
+Our example uses Sv39 on RV64, user-mode execution, and a successful three-level walk to a 4 KB leaf. Sv39 uses 39 meaningful virtual-address bits, with the upper bits of a 64-bit address required to match bit 38. The chosen address lies in its lower canonical region.
 
-## Worked Example
+## First split the actual address
 
-Sv39 virtual address (39 bits):
-
-```text
-| VPN[2] (9 bits) | VPN[1] (9 bits) | VPN[0] (9 bits) | offset (12 bits) |
-```
-
-Translation:
+Translate `VA = 0x0000000040403123`. Its fields are:
 
 ```text
-1. MMU reads the root page table address from the satp CSR
-2. VPN[2] indexes the root table → physical address of level-1 table
-3. VPN[1] indexes the level-1 table → physical address of level-0 table
-4. VPN[0] indexes the level-0 table → physical page number
-5. Physical page number + offset = physical address
+VPN[2] = 1     bits 38:30
+VPN[1] = 2     bits 29:21
+VPN[0] = 3     bits 20:12
+offset = 0x123 bits 11:0
+
+VA = (1 << 30) + (2 << 21) + (3 << 12) + 0x123
 ```
 
-Each step is a memory read. The TLB (Chapter 21) caches the result to avoid the walk.
+Each VPN field is nine bits, so it selects one of 512 entries. An Sv39 page-table entry occupies eight bytes: `512 * 8 = 4096`, allowing one table to fit in one 4 KB page. Multiple levels let the OS allocate lower tables only for regions it needs, instead of allocating a flat entry for every possible virtual page.
 
-## The Same Idea Elsewhere
+## Walk three concrete tables
 
-- **Hardware:** the MMU is a hardware unit that walks page tables and caches translations in the TLB.
-- **RISC-V:** the privileged spec defines Sv39, the `satp` CSR, and the page table entry format.
-- **OS:** the OS builds and manages page tables. It maps virtual pages to physical pages, sets permissions, and handles page faults.
-- **Linux/driver:** drivers use `get_user_pages` to pin user pages for DMA, or `dma_map_single` to map a kernel buffer for device access.
+Assume satp selects Sv39 and names root physical page `0x81000`, whose base is `0x81000000`. All page-table memory is accessible to the walker. The OS has installed these entries:
 
-## When It Fails
+| Table base | Index | Entry's physical address | Entry meaning |
+| --- | --- | --- | --- |
+| `0x81000000` | 1 | `0x81000008` | valid non-leaf, next table `0x81001000` |
+| `0x81001000` | 2 | `0x81001010` | valid non-leaf, next table `0x81002000` |
+| `0x81002000` | 3 | `0x81002018` | valid leaf, physical page base `0x82005000` |
 
-A driver passes a user-space virtual address directly to a device. The device uses the address as a physical address. The DMA engine reads the wrong memory — or nothing. The fix: the driver must use the DMA API to translate the user address to a device-usable address (Chapter 22).
+At each level, the entry address is `table_base + index * 8`. The pointer to the next table is extracted from that entry's physical page number, not inferred from adjacency. We chose adjacent table pages for readability; they need not be adjacent in RAM.
+
+For this user read/write mapping, the leaf has V, R, W, U, A, and D set, and X clear. These mean valid, readable, writable, user-accessible, accessed, dirty, and not executable. The two non-leaf entries have V set and R/W/X clear. We avoid accessed/dirty update policy in this first successful walk by setting A and D in advance.
+
+The result is `0x82005000 + 0x123 = 0x82005123`. A read from that location obtains data; the page-table reads obtained mapping metadata. Mixing those two kinds of reads makes a walk diagram hard to interpret.
+
+## Change the process, change the root
+
+Process B can have a different root and a leaf for the same virtual page that points to `0x83007000`. Its same VA then reaches `0x83007123`. Alternatively, both processes can intentionally map one physical page for sharing. Separate address spaces allow isolation and controlled sharing; they do not require every physical byte to be private.
+
+A user access to a leaf without the necessary user/read/write permission is rejected even if the physical page exists. An invalid entry or a forbidden access produces a page fault under the relevant translation rules. The OS decides whether the access represents a recoverable condition or a policy violation.
+
+The program cannot normally repair its own privileged translation state directly. Chapter 14's privilege checks protect the kernel's mapping decisions. Chapter 21 explains how cached translations and faults interact with changes to those decisions.
 
 ## Check
 
-1. In Sv39, how many levels of page tables are walked for a 4 KB page?
-   - A) 1
-   - B) 2
-   - C) 3
-   - D) 4
-   - Answer: C
-   - Explanation: Sv39 has 3 levels: root, level-1, and level-0. Each VPN field indexes one level.
-   > Hint: How many VPN fields are in a Sv39 address?
-
-2. Which of these are true about virtual memory? Pick all that apply.
-   - A) Each process has its own virtual address space
-   - B) Virtual addresses are translated to physical addresses by the MMU
-   - C) Page tables are stored in physical memory
-   - D) The OS can map the same physical page into multiple virtual address spaces
-   - Answer: A, B, C, D
-   - Explanation: All four are true. Virtual memory provides isolation (A), translation (B), uses physical memory for tables (C), and allows sharing (D).
-   > Hint: What does virtual memory provide? What does the OS do with it?
-
-3. A process accesses a virtual address that is not mapped. What happens?
-   - A) The MMU returns a random physical address
-   - B) The CPU raises a page fault
-   - C) The access is ignored
-   - D) The process is killed immediately
+1. In the worked walk, what is the final physical address?
+   - A) `0x81002018`
+   - B) `0x82005123`
+   - C) `0x40403123`
    - Answer: B
-   - Explanation: An unmapped access causes a page fault. The OS handler decides: map the page, kill the process, or swap in data from disk.
-   > Hint: What does the MMU do when it cannot find a translation?
+   - Explanation: The leaf supplies the physical page base and the original VA supplies offset 0x123.
 
-4. Explain why virtual memory enables process isolation — how does the MMU prevent one process from reading another's memory?
+2. Which statements are correct? Select all that apply.
+   - A) Page-table entries are data stored in physical memory.
+   - B) Adjacent virtual pages must map to adjacent physical pages.
+   - C) Two roots can map the same VA differently.
+   - Answer: A, C
+   - Explanation: The OS chooses each mapping; virtual adjacency does not impose physical adjacency.
 
-5. A driver receives a user-space pointer and passes it directly to a device for DMA. The device reads garbage. Explain what went wrong and what the driver should have done.
+3. Translate `0x40403ABC` with the same tables. Then explain what additional entry would be needed for `0x40404123`. Show the index that changes and why.
+
+4. Keep the leaf's physical page number but clear U. Explain the outcome of a user load and why changing only the numeric address in the application does not grant permission to that page.
+
+5. Research challenge: use the Sv39 specification to construct a valid 2 MB leaf at the middle level for an aligned region. State which table lookup disappears, how more low address bits become the offset, and what alignment rule would make an otherwise valid-looking entry fault.
 
 ## Limits
 
-This chapter shows Sv39 with 4 KB pages. Sv39 also supports 2 MB and 1 GB pages (superpages) that skip levels of the walk. Real systems also have ASIDs (Address Space Identifiers) to avoid TLB flushes on context switches.
+The trace assumes 4 KB leaves, valid canonical addresses, permitted page-table memory accesses, and preset A/D bits. Sv39 also supports larger leaves and additional permission rules. TLBs can avoid repeated walks, but do not replace the page tables as the mapping's software-managed source.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture (Sv39)](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
+- [RISC-V Sv39 and address translation](https://docs.riscv.org/reference/isa/priv/supervisor.html) — verify VPN fields, PTE flags, walk termination, and superpage alignment.
+- [Linux page tables](https://docs.kernel.org/mm/page_tables.html) — compare architecture-specific levels with kernel abstractions.
 
 ## Related
 
-Chapter 19, Chapter 21
+- [Chapter 19 — Cache and the Memory Hierarchy](19_cache_and_the_memory_hierarchy.md)
+- [Chapter 21 — TLBs and Page Faults](21_tlbs_page_faults_and_memory_management.md)

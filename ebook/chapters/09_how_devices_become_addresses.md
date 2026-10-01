@@ -1,80 +1,89 @@
 # Chapter 09 — How Devices Become Addresses
 
-> **Part III — CPU Meets Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part III — CPU Meets Hardware**
 
-## Why This Matters
+## Why can a store make hardware do something?
 
-The CPU has one address bus. RAM, UART, GPIO, and every other device all hang off it. The CPU says "read address 0x10000000" — something must decide whether that means RAM or a device register. That decision is address decoding, and getting it wrong means the CPU talks to the wrong hardware.
+So far, a store changed RAM. The same kind of CPU request can instead reach a device. Memory-mapped I/O, or MMIO, assigns parts of an address space to hardware interfaces. An address decoder uses the request's address to select the responding target; the target determines what the operation means.
 
-## Core Idea
+A register here is a device's named interface location, not one of the CPU registers x0–x31. Some device registers retain configuration, others expose live status, and others behave like commands or queues. An address alone cannot tell you which behavior applies.
 
-The address space is divided into ranges. A range of addresses belongs to RAM; another range belongs to a device. The **interconnect** (the wiring between CPU and devices) decodes each address and routes the access to the right destination. This is called **Memory-Mapped I/O** (MMIO): device registers appear as addresses.
+## Define the teaching platform
 
-## Worked Example
+For this part of the book, assume bare-metal software with permission to access the following physical ranges. Bare-metal means no operating-system service stands between our code and the hardware. The UART map is fictional and deliberately differs from real UART standards.
 
-```text
-0x00000000..0x7FFFFFFF  → RAM (2 GB)
-0x10000000..0x10000FFF  → UART (4 KB)
-0x10001000..0x10001FFF  → GPIO (4 KB)
-```
+| Physical range, inclusive | Target |
+| --- | --- |
+| `0x10000000`–`0x10000FFF` | Teaching UART |
+| `0x80000000`–`0x8000FFFF` | RAM used for this example |
 
-When the CPU executes `lw x12, 0x10000000`, the interconnect sees the address is in the UART range and routes the read to the UART's DATA register. The CPU used a normal load instruction — the routing is invisible to software.
+The UART uses aligned 32-bit little-endian register accesses:
 
-## The Same Idea Elsewhere
+| Offset | Name | Initial contract |
+| --- | --- | --- |
+| `0x00` | TX_DATA | Write low eight bits to transmitter when ready |
+| `0x04` | STATUS | Read bit 0: TX ready; bit 1: RX data available |
+| `0x08` | RX_DATA | Read and consume one received byte when available |
+| `0x0C` | IRQ_ENABLE | Bit 0 enables receive-event notification |
+| `0x10` | IRQ_STATUS | Latched events; write one to clear selected bits |
+| `0x14` | CONTROL | Read/write configuration, bit 0 enables the device |
 
-- **Hardware:** the address decoder is combinational logic: compare the address bits against the range, assert the chip select for the matching device.
-- **RISC-V:** the ISA says nothing about MMIO — it is a platform decision. The RISC-V privileged spec defines how to configure the memory map.
-- **OS:** the OS owns the memory map. It programs the decoder (via firmware or platform registers) and decides which ranges are RAM and which are devices.
-- **Linux/driver:** a driver receives a resource address (from Device Tree or ACPI) and maps it into the kernel's address space with `ioremap` before accessing it.
+Later chapters specify the event protocol before using it. This table gives addresses and basic access meanings, not a production UART implementation.
 
-## When It Fails
+## Follow a store through the decoder
 
-A driver hard-codes `0x10000000` as the UART base. It works on the development board. On the next board revision the UART moved to `0x20000000` and the driver reads garbage — or worse, writes to an unrelated device. The address was never a constant; it was a property of the platform that should have been described externally.
+Let x10 hold `0x10000000`, x12 hold `0x41`, and assume CONTROL enables the UART and STATUS bit 0 is set. Execute `sw x12, 0(x10)`.
+
+The CPU forms the address `0x10000000` and issues a four-byte write containing `0x00000041`. The interconnect routes it to the UART range. The UART decodes offset zero and places the low byte in its transmit path. It may clear TX-ready until it can accept another byte. No RAM location at that address was updated: that physical address selects a different target.
+
+Now change x10 to `0x80000000` and execute the same instruction. The selected target is RAM, where bytes `41 00 00 00` are stored. Identical instruction and data, different address, different effect. The ISA defines the request; the platform map and device specification define the target's response.
+
+This is also why a readback is not universally a verification of a write. Reading a command register may be unsupported, return unrelated status, or have a side effect. Read a documented status register if you need to observe the requested operation.
+
+## Mapping is not just pointer casting
+
+The bare-metal trace uses physical addresses directly. Under an OS with virtual memory, the address used by a CPU instruction can first be translated. A numeric physical device address is not automatically a valid kernel pointer. Linux drivers obtain a resource and map it into an appropriate kernel I/O mapping, then use MMIO accessors such as readl and writel. Chapter 29 follows that path concretely.
+
+The mapping's memory attributes matter too. Ordinary RAM may be cached or speculatively accessed; a device read may consume data. Treating a device region like ordinary cacheable memory can change the number and timing of operations the device observes. `volatile` in C alone does not establish the platform mapping or supply the kernel's I/O contract.
+
+## Distinguish an address error from a device-state error
+
+A silent UART after a write could mean the address selected the wrong peripheral, the device was disabled, or the transmitter was not ready. A STATUS observation can test readiness at the selected target, but it cannot by itself prove that the target is the intended UART. Compare the resource range, board description, documented identification registers if available, and relevant enable state.
+
+Chapter 10 continues at the next boundary: even after selecting the correct device, what does each register access actually do?
 
 ## Check
 
-1. The CPU executes `sw x12, 0x10000004`. The memory map says `0x10000000..0x10000FFF` is UART. What happens?
-   - A) The write goes to RAM at offset 4
-   - B) The write goes to the UART register at offset 4
-   - C) The write is ignored because devices cannot be written
-   - D) The CPU traps because the address is invalid
+1. With the given map, `sw x12, 0(x10)` and x10 = `0x10000000` targets what?
+   - A) RAM holding a copy of a UART register
+   - B) The UART TX_DATA interface
+   - C) CPU register x0
    - Answer: B
-   - Explanation: The address falls in the UART range, so the interconnect routes it to the UART. Offset 4 within that range selects a specific register.
-   > Hint: The address is in the UART range. What does the offset select?
+   - Explanation: Address decoding selects the peripheral and then its offset-zero register.
 
-2. Which of these are true about MMIO? Pick all that apply.
-   - A) Device registers appear as addresses in the CPU's address space
-   - B) The CPU uses special instructions to access devices
-   - C) The interconnect routes accesses based on the address
-   - D) Each device occupies a range of addresses
-   - Answer: A, C, D
-   - Explanation: MMIO means normal load/store instructions access devices — no special instructions. The interconnect decodes the address and routes to the right device.
-   > Hint: "Memory-mapped" means devices look like memory. What does the CPU use to access them?
+2. Which facts must be known before the transmit write is valid? Select all that apply.
+   - A) The register's supported width
+   - B) The documented ready/enable conditions
+   - C) That every write can be checked by reading the same address
+   - Answer: A, B
+   - Explanation: The last statement is not a general register guarantee.
 
-3. A platform has RAM at `0x00000000..0x3FFFFFFF` and a device at `0x40000000..0x4000FFFF`. What is the minimum number of address bits the decoder must examine to distinguish them?
-   - A) 1 bit (bit 30)
-   - B) 2 bits (bits 31:30)
-   - C) 4 bits (bits 31:28)
-   - D) 32 bits (the full address)
-   - Answer: B
-   - Explanation: RAM is `00...` and the device is `01...` in the top two bits. Bits 31:30 are `00` for RAM and `01` for the device — 2 bits suffice.
-   > Hint: Write the start addresses in binary. Where do they first differ?
+3. A decoder accidentally ignores address bit 12 between two adjacent 4 KB UART windows. Show how UART0 at `0x10000000` and UART1 at `0x10001000` can alias. Propose a safe experiment using documented scratch state, and state what would make that experiment unsafe.
 
-4. Explain why a driver must call `ioremap` before accessing a device register on Linux — what does `ioremap` do, and what happens if you access the physical address directly?
+4. Write a trace distinguishing the CPU's effective address, a translated physical address, the selected device, and the device-relative offset. Explain which equality assumptions held only in the bare-metal example.
 
-5. A board has two UARTs. UART0 is at `0x10000000` and UART1 is at `0x10001000`. A driver writes to `0x10001004` expecting to reach UART1's STATUS register. It reads back UART0's STATUS instead. What is the most likely cause, and how would you confirm it?
+5. Research challenge: consult Linux Device I/O documentation. Explain why a cast of a physical address to a pointer is not equivalent to an I/O mapping, and distinguish mapping attributes from accessor ordering.
 
 ## Limits
 
-This chapter assumes a simple memory map with fixed ranges. Real systems have PCIe devices that configure their own addresses at boot, IOMMUs that translate device addresses, and multiple levels of interconnects. The principle — address ranges select devices — is the same.
+This teaching interconnect has a simple physical decoder; real platforms add bridges, access-control checks, and potentially translated bus addresses. The fictional UART map must not be used as a register specification for a real 16550 or another board.
 
 ## Go Deeper
 
-- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
-- [Linux Driver Model](https://docs.kernel.org/driver-api/driver-model/)
+- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html) — compare resource addresses, I/O mappings, and accessor semantics.
+- [Devicetree address translation](https://devicetree-specification.readthedocs.io/en/stable/devicetree-basics.html) — follow `reg` and `ranges` across a bus.
 
 ## Related
 
-Chapter 08, Chapter 10
+- [Chapter 08 — Functions, ABI, and the Stack](08_functions_abi_and_the_stack.md)
+- [Chapter 10 — Device Registers](10_device_registers.md)

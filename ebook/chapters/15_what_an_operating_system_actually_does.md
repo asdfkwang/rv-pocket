@@ -1,85 +1,81 @@
 # Chapter 15 — What an Operating System Actually Does
 
-> **Part IV — Protection and the Operating System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part IV — Protection and the Operating System**
 
-## Why This Matters
+## What does the OS add to the hardware mechanisms?
 
-Without an OS, every program must manage hardware itself — schedule its own time, handle its own I/O, protect its own memory. The OS is the software that makes this unnecessary: it provides abstractions (files, processes, sockets) so programs can focus on their logic.
+Privilege and traps provide controlled entry. They do not by themselves define a process, file descriptor, or sharing policy. An operating system maintains those abstractions and uses hardware mechanisms to enforce their rules. Its job is to let programs request useful operations while coordinating finite CPU time, memory, storage, and devices.
 
-## Core Idea
+Return to Chapter 01's write. We can now unpack the box labeled OS without pretending that it is one instruction or one table lookup. The kernel needs both a record of the requesting process and a representation of the object the descriptor selects.
 
-The OS does five things: **process management** (run multiple programs), **memory management** (give each program its own address space), **file systems** (store and retrieve data), **device management** (talk to hardware via drivers), and **system calls** (the interface between programs and the OS). Everything else is detail.
+## One descriptor number, different objects
 
-## Worked Example
+Suppose process A has descriptor 3 connected to a serial device, while process B has descriptor 3 connected to a regular file. The integer 3 is meaningful only with the process's descriptor table. It is not a global device identifier.
 
-A program calls `write(fd, "A", 1)`:
+For the serial write, use this conceptual path:
 
 ```text
-1. Program executes ecall (system call)
-2. CPU traps to S-mode, jumps to OS handler
-3. OS checks: is fd valid? does the program have permission?
-4. OS finds the file/device for fd
-5. OS calls the driver's write function
-6. Driver writes to the device register
-7. OS returns the result to the program
+A: fd=3, buffer contains 41, count=1
+system-call entry: preserve caller state and obtain arguments
+lookup: A's descriptor 3 -> open serial object
+checks: access mode, buffer access, object-specific conditions
+dispatch: appropriate file/subsystem operation accepts data
+serial subsystem/driver: queue and transmit when possible
+return: result delivered to A
 ```
 
-The program never touched hardware. The OS did everything on its behalf.
+Linux's actual serial path includes subsystem code rather than one universal driver's write callback. The important connection is that the kernel dispatches an abstract operation through the selected object's implementation. B's same-numbered descriptor dispatches through a filesystem path instead.
 
-## The Same Idea Elsewhere
+The buffer pointer comes from userspace. It cannot be trusted merely because its numeric value fits in a register. Kernel user-access helpers support the architecture's access checks and fault handling. The kernel must also handle short transfers and errors according to the interface, rather than treating the application's requested length as proof of available data.
 
-- **Hardware:** the CPU provides the trap mechanism (Chapter 13) and privilege levels (Chapter 14) that make the OS possible.
-- **RISC-V:** the privileged spec defines the CSRs and instructions the OS uses to manage hardware.
-- **OS:** the OS is the software that uses these mechanisms to provide abstractions.
-- **Linux/driver:** a driver is the OS's agent for a specific device. The OS calls the driver; the driver talks to hardware.
+## Accepted work can outlive the call
 
-## When It Fails
+Assume a buffered regular-file write. The kernel can copy data into memory associated with that file and mark it dirty, meaning it differs from backing storage. Later writeback submits storage work. A successful write records acceptance under the file interface; it does not necessarily certify persistence after power failure.
 
-A program writes to a file and the write succeeds, but the data is lost on reboot. The OS buffered the write in memory (for performance) and never flushed it to disk. The program should have called `fsync` to force the write to stable storage. The bug is not the write — it is assuming the OS's buffering is transparent.
+The application can request stronger synchronization using an interface such as fsync and must check its result. File contents and the directory entry naming the file have distinct persistence considerations; Chapter 34 works through a replacement-file sequence. The existence of a flush operation is not a reason to call every successful write "durable."
+
+For a serial object, the relevant completion may instead be transmitter drain or a protocol-level acknowledgement from the peer. "Finished" must name the boundary being observed. The same OS abstraction can hide implementation details while still requiring the application to understand its documented guarantees.
+
+## Isolation does not mean independent hardware
+
+Two programs may have separate memory yet share one device. The OS can serialize operations, enforce permissions, and provide queues, but it cannot create two physical baud-rate configurations in a UART that has only one. Some conflicts require a higher-level sharing policy or exclusive ownership.
+
+Similarly, file locking does not automatically establish an application message protocol. The application must decide the unit of a logical update and use the relevant atomicity or locking interface. Otherwise two individually valid operations can combine into a result neither application intended.
+
+These examples show why an OS is more than a list of services. It carries state across requests: which object is open, which data is buffered, who may access it, and who is waiting. Chapter 16 focuses on the state needed to stop one execution and resume another.
 
 ## Check
 
-1. A program calls `read(fd, buf, 100)`. What does the OS do first?
-   - A) Read 100 bytes from the device
-   - B) Check if fd is valid and the program has permission
-   - C) Allocate 100 bytes in kernel memory
-   - D) Call the driver's read function
-   - Answer: B
-   - Explanation: The OS validates the request before doing anything. An invalid fd or a permission violation returns an error without touching the device.
-   > Hint: What does the OS check before trusting a program's request?
+1. A and B both call write with fd = 3. Why can the destinations differ?
+   - A) Each descriptor is interpreted through its process's table.
+   - B) The instruction encoding chooses the destination.
+   - C) Descriptor 3 always means a UART.
+   - Answer: A
+   - Explanation: The handle's meaning depends on the kernel-managed process context.
 
-2. Which of these are OS responsibilities? Pick all that apply.
-   - A) Scheduling processes
-   - B) Managing memory
-   - C) Talking directly to device registers
-   - D) Providing system calls
-   - Answer: A, B, D
-   - Explanation: The OS schedules processes, manages memory, and provides system calls. It does NOT talk to device registers directly — drivers do that.
-   > Hint: Who touches hardware registers? The OS or its agents?
+2. Which claims follow from a successful buffered file write? Select all that apply.
+   - A) Some amount of data was accepted, as reported by the result.
+   - B) The same amount is necessarily durable after sudden power loss.
+   - C) The result must still be interpreted according to that object's interface.
+   - Answer: A, C
+   - Explanation: Acceptance and persistence are different guarantees.
 
-3. A program opens a file, writes data, and closes it without calling `fsync`. The system crashes. What happens to the data?
-   - A) It is always safe — the OS flushes on close
-   - B) It may be lost — the OS may have buffered it in memory
-   - C) It is corrupted — the file is incomplete
-   - D) It is duplicated — the OS writes it twice
-   - Answer: B
-   - Explanation: The OS buffers writes for performance. Without `fsync`, the data may still be in memory when the crash occurs. `close` does not guarantee the data reached stable storage.
-   > Hint: What does the OS do to make writes fast? What makes them safe?
+3. Draw the state retained by the kernel between a successful write and later physical completion. Explain why returning from the system call does not imply that all related kernel work has ended.
 
-4. Explain why the OS uses buffering for file I/O — what performance problem does it solve, and what correctness risk does it introduce?
+4. Two writers each issue a header write followed by a payload write. Give an interleaving that breaks their message format. Identify the additional assumptions needed for a correct serialization scheme.
 
-5. Two programs open the same file and write to it simultaneously. Without any coordination, the result is interleaved garbage. Explain what the OS provides to prevent this, and what the programs must do to use it.
+5. Research challenge: follow Linux VFS documentation from a descriptor-associated file object to an operation implementation. Contrast one regular-file path with a character-device path, naming the subsystem boundary rather than assuming both call the same driver method.
 
 ## Limits
 
-This chapter shows the OS as a monolithic kernel. Microkernels move drivers and file systems to user space. The abstractions are the same; the implementation differs. The key idea — the OS provides abstractions over hardware — is universal.
+The syscall path is conceptual and does not prescribe Linux's exact validation order. Permission policy, buffering, atomicity, and completion guarantees depend on the object and operation. This chapter establishes questions to ask; later chapters trace particular interfaces.
 
 ## Go Deeper
 
-- [Linux System Calls](https://docs.kernel.org/arch/riscv/syscall.html)
-- [Linux File Systems](https://docs.kernel.org/filesystems/)
+- [Linux VFS](https://docs.kernel.org/filesystems/vfs.html) — inspect file objects and operation dispatch.
+- [Linux user-space memory access](https://docs.kernel.org/core-api/mm-api.html) — locate the user-access helper contracts rather than using an ordinary memcpy.
 
 ## Related
 
-Chapter 14, Chapter 16
+- [Chapter 14 — Privilege: M, S, and U](14_privilege_m_s_and_u.md)
+- [Chapter 16 — Processes and Context Switching](16_processes_and_context_switching.md)

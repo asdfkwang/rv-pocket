@@ -1,85 +1,85 @@
 # Chapter 34 — Files, Storage, and the I/O Path
 
-> **Part VIII — A Complete System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VIII — A Complete System**
 
-## Why This Matters
+## When is a file write durable?
 
-Data that matters must survive reboot. The I/O path — from `write()` in a program to bytes on a storage device — is the most complex path in the system. It crosses user space, kernel space, page cache, block layer, device driver, and hardware. Understanding it is understanding why data is fast, slow, safe, or lost.
+Chapter 33 separated acceptance from completion. Regular-file I/O adds another boundary: persistence after a crash or power loss. A byte copied into a kernel buffer can be available to subsequent reads long before storage makes it durable.
 
-## Core Idea
+Consider an ordinary buffered write to an already open regular file. The virtual filesystem layer dispatches the request to the filesystem. Data is copied into the page cache, memory caching file contents, and relevant pages are marked dirty. Writeback later produces storage requests through the filesystem and block stack. Not every write uses this path: device files, direct I/O, and other modes have different contracts.
 
-A `write()` system call does not write to disk. It copies data to the **page cache** (kernel memory) and returns. The data is flushed to disk later by the **block layer** and the **device driver**. This buffering makes writes fast but introduces the risk of data loss on crash. `fsync` forces the data to stable storage.
+## Trace one byte through storage
 
-## Worked Example
+Suppose an application's byte at file offset 100 changes from `0x41` to `0x42`.
+
+| Boundary | Page-cache value | Durable storage value | What is established |
+| --- | --- | --- | --- |
+| Before write | `41` or uncached | `41` | old file content |
+| Buffered write accepted | `42`, dirty | may remain `41` | new data accepted in memory |
+| Writeback submitted | `42` | completion pending | storage work requested |
+| Required persistence operations complete successfully | `42` | `42` under the storage contract | requested synchronization established |
+
+A read through the file cache can return `42` at the second row. That successful read does not prove power-loss persistence. Likewise, an I/O completion may need to account for a device's volatile write cache and the filesystem's durability protocol before the stronger guarantee is satisfied.
+
+fsync asks the system to synchronize the file's data and required metadata under its documented contract. Applications must check its result: errors can be reported later than the initial write. Close is not a general substitute for explicit durability synchronization.
+
+## File content and its name are different state
+
+Suppose an application replaces a configuration file by writing a new temporary file and renaming it. The new file's bytes and the directory entry pointing to it are distinct persistent objects. A conceptual local-filesystem update sequence is:
 
 ```text
-Program: write(fd, "A", 1)
-  → Kernel: copy "A" to page cache
-  → Return to program (fast!)
-
-Later:
-  → Block layer: schedule write to disk
-  → Driver: program the storage device
-  → Device: write bytes to flash
-  → Interrupt: write complete
+create temporary file in the target directory
+write the full new contents, handling partial writes
+fsync the temporary file; check success
+rename it over the old name; check success
+fsync the containing directory; check success
 ```
 
-The program's `write` returned long before the byte reached disk. `fsync` waits for the interrupt.
+This pattern addresses file contents and the namespace update separately, under a filesystem supporting the required operations and guarantees. It does not excuse ignoring any return value, cross-filesystem rename rules, or the application's own concurrency protocol.
 
-## The Same Idea Elsewhere
+If a crash occurs before the rename, the old name can still refer to the old file even though the temporary file's data was synchronized. If it occurs after rename but before directory synchronization, the application has not yet completed the full intended persistence sequence. Reason at each boundary rather than assuming a printed "save complete" message describes storage reality.
 
-- **Hardware:** the storage device (eMMC, SSD, NVMe) has its own controller and cache. Data may be in the device's cache, not on the flash.
-- **RISC-V:** the CPU programs the storage controller via MMIO or DMA.
-- **OS:** the OS manages the page cache, block layer, and I/O scheduling.
-- **Linux/driver:** the storage driver handles the device-specific protocol and DMA.
+## The storage stack still reaches a device
 
-## When It Fails
+Below the filesystem, requests may be queued, merged, and transferred using DMA. Chapter 32's buffer-lifetime and completion rules apply inside that lower path. The filesystem also manages metadata and ordering relationships that an isolated raw DMA transfer does not capture.
 
-A program writes data, calls `fsync`, and the data is safe. But the device has a volatile cache and loses data on power loss. The program thinks the data is safe. The fix: use `fsync` + `fdatasync` + device flush commands, or use a device with power-loss protection.
+This is why diagnosing lost data requires more than observing the block device once. Determine whether the application requested durability, whether every relevant call succeeded, which file and directory were synchronized, and what guarantees the filesystem, device, and backing platform provide. A faulty device or a remote filesystem can change the investigation, but should not be asserted as the cause without evidence.
+
+Chapter 35 follows an input event in the opposite direction, from a physical action through the kernel to an application. Both paths require distinguishing intermediate acceptance from the user's final observation.
 
 ## Check
 
-1. A program calls `write(fd, "A", 1)`. Where does the data go first?
-   - A) Directly to the storage device
-   - B) To the page cache in kernel memory
-   - C) To the CPU cache
-   - D) To the device driver
-   - Answer: B
-   - Explanation: `write` copies data to the page cache. The data is flushed to disk later by the block layer.
-   > Hint: What makes writes fast? Where is the data before it reaches disk?
-
-2. Which of these are true about the I/O path? Pick all that apply.
-   - A) The page cache buffers writes
-   - B) The block layer schedules I/O
-   - C) The device driver programs the hardware
-   - D) The program's write always waits for the disk
-   - Answer: A, B, C
-   - Explanation: The page cache (A), block layer (B), and driver (C) are all part of the I/O path. The program's write does not wait for the disk (D is false).
-   > Hint: What does the program's write return? When does the data reach disk?
-
-3. A program calls `fsync(fd)`. What does this do?
-   - A) Flush the page cache to disk
-   - B) Close the file
-   - C) Delete the file
-   - D) Check the file for errors
+1. A buffered write succeeds and a subsequent cached read returns the new byte. What is proven?
+   - A) The read path can observe the new data.
+   - B) Sudden power loss cannot lose the new data.
+   - C) The containing directory was synchronized.
    - Answer: A
-   - Explanation: `fsync` forces the data in the page cache to stable storage. It does not close or delete the file.
-   > Hint: What does "sync" mean? What is being synchronized?
+   - Explanation: Cached visibility does not by itself establish storage durability or namespace persistence.
 
-4. Explain why the page cache makes writes fast — what would happen if every write went directly to disk?
+2. Which must be considered for a durable replacement-file protocol? Select all that apply.
+   - A) Partial writes and errors
+   - B) File data synchronization
+   - C) Persistence of the directory update
+   - Answer: A, B, C
+   - Explanation: All three represent distinct ways the intended update can remain incomplete.
 
-5. A program writes data and calls `fsync`. The system crashes. The data is lost. What is the most likely cause?
+3. Mark possible crash points in the replacement sequence. For each, state which operation completed and what you can conservatively claim about old and new data without inventing filesystem guarantees.
+
+4. An application logs "saved" before checking fsync's result. Construct an execution where the log is misleading even though write returned the full byte count. Identify the evidence needed to diagnose it.
+
+5. Research challenge: consult the write, fsync, and rename documentation for a chosen operating system/filesystem. Explain how directory synchronization and device write-cache behavior affect the intended failure model, and record any unsupported operations or guarantees.
 
 ## Limits
 
-This chapter shows a simple I/O path. Real systems have I/O schedulers, multipath, RAID, and complex storage protocols. The principle — buffer, schedule, flush — is the same.
+The main trace assumes ordinary buffered regular-file I/O. Direct I/O, network filesystems, journals, copy-on-write filesystems, and storage hardware have additional contracts. Durability must be argued for the chosen stack and failure model, with all relevant errors checked.
 
 ## Go Deeper
 
-- [Linux File Systems](https://docs.kernel.org/filesystems/)
-- [Linux Block Layer](https://docs.kernel.org/block/)
+- [Linux VFS](https://docs.kernel.org/filesystems/vfs.html) — identify the filesystem operation boundaries.
+- [Linux block-layer writeback cache control](https://docs.kernel.org/block/writeback_cache_control.html) — inspect flush and force-unit-access responsibilities.
+- [Linux filesystem documentation](https://docs.kernel.org/filesystems/) — select the actual filesystem's guarantees for the research task.
 
 ## Related
 
-Chapter 33, Chapter 35
+- [Chapter 33 — Exposing Devices to Userspace](33_exposing_devices_to_userspace.md)
+- [Chapter 35 — One Button Press, End to End](35_one_button_press_end_to_end.md)

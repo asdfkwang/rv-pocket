@@ -1,25 +1,34 @@
 # RV Pocket — Computer Systems from RISC-V to Linux
 
-Standalone eBook draft. It does not share a numbering scheme with the game Episodes.
+A standalone book about how instructions, operating systems, and devices cooperate. Its central question is: **when software requests an action, which state changes, who changes it, and what proves that the action finished?** You can read it without playing any Episodes or running a simulator.
 
-It connects **Computer Architecture + RISC-V + Operating Systems + Linux Device Drivers** vertically within a single system instead of separating them like three books.
+## Who this book is for
 
-```text
-Hardware / RISC-V
-      ↓
-OS mechanisms
-      ↓
-Linux kernel / driver
-      ↓
-Userspace-visible behavior
-```
+The intended reader is a university student with basic programming experience. You should be comfortable with variables, loops, functions, arrays, and the idea that a C pointer refers to an object in memory. You do not need prior RISC-V assembly, kernel programming, or driver-writing experience. The book builds those mechanisms explicitly instead of using their terminology as a prerequisite.
 
-## Philosophy
+The goal is to reason across boundaries: decode a small instruction trace, explain why a function needs saved state, follow a trap and a context switch, translate an address, and account for the lifetime of a buffer used by a device. Reading a familiar definition is not the completion criterion; being able to explain the next state is.
 
-- **Easy to read:** The main text explains through small examples and state tracking.
-- **Hard to solve:** Checks require reasoning, debugging, and source/spec lookup.
-- **Deep when you want it:** Deep definitions and edge cases are covered through official documentation links.
-- Checks are open-book/open-web and are not game progression gates.
+## How the argument develops
+
+Parts I–II establish values, storage, execution, and calls. Part III changes the meaning of a memory access by connecting it to a device, then introduces waiting and traps. Parts IV–V explain shared execution, protection, cached state, address translation, and device ownership. Parts VI–VII apply those mechanisms to boot and Linux driver lifecycles. Part VIII follows complete paths and uses evidence to locate failures across layers.
+
+The same byte and the same kinds of state recur as the model grows. Chapters 01 and 15 revisit a write at different depths; Chapters 12 and 30 connect hardware notification to a Linux handler; Chapters 22, 23, and 32 develop DMA from ownership to the real API. The later chapter should explain a previously hidden boundary, not merely repeat the earlier definition.
+
+## Machine and code conventions
+
+- Arithmetic and assembly examples use RV64 integer registers and little-endian memory unless stated otherwise. Four-byte instruction traces explicitly exclude compressed encodings.
+- Chapter 09 defines a fictional UART at physical base `0x10000000`. Its register map is a teaching contract, not a real board specification. Device-specific examples introduce their own contracts before using them.
+- Addresses in early RAM exercises are local examples, not one mandatory whole-machine memory map. Later virtual, physical, and DMA addresses are labeled separately.
+- Linux snippets illustrate a stated mechanism and identify omitted error, teardown, or concurrency behavior. They are not complete loadable drivers. Read the target kernel's documentation and source before adapting an API.
+- Tables and ASCII traces carry the explanation; no external assets, simulator, or episode state is required.
+
+## How to use the Checks
+
+Problems are deliberately harder than the exposition. Work them with paper, a calculator, and the linked official documentation. Some ask for a counterexample or a diagnostic plan rather than one numeric result. For those, a good answer states assumptions, tracks intermediate state, and explains what its evidence rules out and what remains uncertain.
+
+Research challenges identify a source and a specific question to investigate. Record the version or commit you read. Open questions are not automatically graded, and a difficult question is not a gate to reading the next chapter. Return to it after the associated mechanism becomes clearer.
+
+Each chapter includes the limits of its model, focused references, and neighboring chapter links. The reader provides section navigation and previous/next chapter controls. Episode bookmarks are optional entry points into this independent reading order.
 
 # Table of Contents
 

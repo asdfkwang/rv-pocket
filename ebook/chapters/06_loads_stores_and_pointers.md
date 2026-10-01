@@ -1,80 +1,93 @@
 # Chapter 06 — Loads, Stores, and Pointers
 
-> **Part II — Speaking RISC-V**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part II — Speaking RISC-V**
 
-## Why This Matters
+## Turn a pointer expression into a memory operation
 
-Every variable access is a load or store: read a value from memory into a register, or write a register back. Pointers are just addresses held in registers. When a program reads the wrong bytes, the bug is almost always here — wrong size, wrong offset, or a pointer that was never valid.
+You can now trace arithmetic registers and interpret stored bytes. To connect them, a load copies a value from memory into a register; a store copies low-order register bits into memory. The essential questions are the effective address, access width, byte order, and result extension.
 
-## Core Idea
+Base integer loads and stores compute their address from a base register plus a signed immediate byte offset. In `lw x12, 4(x10)`, x10 supplies the base, 4 is the immediate, and x12 receives the loaded value. There is no offset register in that instruction. A register holding 4 elsewhere is irrelevant unless a separate instruction uses it.
 
-A load reads memory at an address into a register; a store writes a register to memory. The address comes from a base register plus an immediate offset. The instruction name says how many bytes move: `lb` (byte), `lh` (halfword), `lw` (word), `ld` (doubleword) — and `sb`, `sh`, `sw`, `sd` for stores.
+## Follow a complete load, change, and store
 
-## Worked Example
+Assume the following readable and writable RAM, little-endian order, and x10 = `0x1000`:
 
 ```text
-x10 = 0x1000          (base address)
-x11 = 4               (offset)
-lw x12, 4(x10)        → reads 4 bytes at 0x1004 into x12
-sw x12, 8(x10)        → writes x12 to 0x1008
+address: 1000 1001 1002 1003 | 1004 1005 1006 1007
+bytes:    00   00   00   00 |   FE   FF   FF   FF
 ```
 
-The address is computed first (base + offset), then the memory operation happens. The offset is a constant baked into the instruction; the base is whatever the register holds at runtime.
+Execute:
 
-## The Same Idea Elsewhere
+```text
+lw   x12, 4(x10)
+addi x12, x12, 3
+sw   x12, 0(x10)
+```
 
-- **Hardware:** the memory subsystem serves the computed address; caches may hold a copy (Chapter 19).
-- **RISC-V:** load/store instructions are the only way to touch memory — arithmetic works on registers only.
-- **OS:** the OS decides which addresses a process may access; a bad pointer faults before hardware ever sees it (Chapter 20).
-- **Linux/driver:** `__iomem` pointers use special accessors (`readl`/`writel`) instead of plain loads/stores, because device registers are not normal memory.
+The load computes `0x1000 + 4 = 0x1004`, fetches four bytes, and reconstructs `0xFFFFFFFE`. On RV64, lw sign-extends that 32-bit pattern to `0xFFFFFFFFFFFFFFFE`, or -2. Adding 3 yields 1. The store writes the low 32 bits of x12 to addresses `0x1000` through `0x1003`, producing `01 00 00 00`. The source bytes at `0x1004` remain unchanged.
 
-## When It Fails
+If we replace lw with lwu, the first result becomes positive `0x00000000FFFFFFFE`. Adding 3 produces `0x0000000100000001`. The final sw still stores `01 00 00 00`, because it discards the high 32 bits. Identical final memory does not prove identical intermediate register values.
 
-A driver reads a 32-bit status register with `readl` but the hardware is big-endian while the CPU is little-endian. The value arrives byte-swapped and every bit test fails. The pointer was fine; the width and byte order were not. Always check the register width and the platform's byte order before writing bit tests.
+## Choose the width deliberately
+
+| Width | Signed load | Unsigned load on RV64 | Store |
+| --- | --- | --- | --- |
+| 1 byte | `lb` | `lbu` | `sb` |
+| 2 bytes | `lh` | `lhu` | `sh` |
+| 4 bytes | `lw` | `lwu` | `sw` |
+| 8 bytes | `ld` | same full-width pattern | `sd` |
+
+Stores do not have signed and unsigned variants because they select low-order bits without interpreting them as a mathematical sign. Width still matters: sw changes four addressed bytes even when the register contains only the value 1.
+
+For a C array of 32-bit elements, element i begins `4*i` bytes beyond the base. A pointer increment expressed in C scales by element size; an instruction's immediate byte offset does not. To index with a variable i, compute the scaled offset in a register, add it to the base, then load from that resulting address.
+
+```text
+slli x11, x11, 2       # x11 initially holds i; now holds 4*i
+add  x13, x10, x11     # x13 = base + 4*i
+lw   x12, 0(x13)
+```
+
+The shift is multiplication by four for this address calculation, assuming the chosen index and arithmetic do not overflow the usable range. Array bounds are not checked by these instructions. Software must establish that the selected object and access are valid.
+
+## An address is not evidence of permission
+
+Seeing `0xDEADBEEF` in a register tells you neither what is mapped there nor whether a load succeeds. A word access at that address is misaligned, but its handling depends on the execution environment. Permissions, translation, and whether the target is RAM or a device also matter.
+
+Similarly, a correct pointer does not establish a correct access width. Reading a byte-sized device register with a word load can request an operation the device does not support. Chapter 09 introduces address decoding and Chapter 10 the register contract. For ordinary RAM, the next chapter shows how branches choose which accesses occur and how many times.
 
 ## Check
 
-1. `x10 = 0x2000`. What address does `lw x12, 0x10(x10)` read from?
-   - A) `0x2010`
-   - B) `0x2000`
-   - C) `0x2100`
-   - D) `0x30`
-   - Answer: A
-   - Explanation: Base + offset: `0x2000 + 0x10 = 0x2010`. The offset is added to the base register, not used alone.
-   > Hint: The address is computed before the read. What two numbers get added?
+1. In the worked example, what remains at `0x1004` after the store?
+   - A) `01 00 00 00`
+   - B) `FE FF FF FF`
+   - C) The bytes are erased by the load.
+   - Answer: B
+   - Explanation: The store targets base + 0; reading base + 4 does not alter ordinary RAM.
 
-2. Which of these move exactly 4 bytes? Pick all that apply.
-   - A) `lw`
-   - B) `lb`
-   - C) `sw`
-   - D) `ld`
-   - Answer: A, C
-   - Explanation: `lw`/`sw` are word (4-byte) operations. `lb` moves one byte; `ld` moves 8 bytes on RV64.
-   > Hint: l=load, s=store; the letter after is the width: b=byte, h=halfword, w=word, d=doubleword.
+2. Which can differ between lw and lwu on RV64? Select all that apply for the same valid address.
+   - A) The high 32 bits of the result
+   - B) A subsequent 64-bit comparison's outcome
+   - C) The number of bytes requested
+   - Answer: A, B
+   - Explanation: Both fetch four bytes. Their extension rules can change the register value and later calculations.
 
-3. A pointer in `x10` holds `0xDEADBEEF`. What happens when the CPU executes `lw x12, 0(x10)`?
-   - A) It reads 4 bytes from address `0xDEADBEEF`
-   - B) It writes `0xDEADBEEF` to memory
-   - C) It adds `0xDEADBEEF` to `x12`
-   - D) It traps immediately because the address is invalid
-   - Answer: A
-   - Explanation: A pointer is just an address in a register. `lw` reads from that address. Whether the address is valid is a separate question (the OS may fault later), but the instruction's intent is a read.
-   > Hint: What does `lw` do with the address in its base register?
+3. Trace the three instructions again with source bytes `FD FF FF 7F`. Show every 64-bit register result and every destination byte. Repeat with lwu and explain whether any result changes.
 
-4. Look up the RISC-V load/store encoding and explain why the offset is a 12-bit signed immediate — what range of offsets can a single instruction reach, and how do you access something farther away?
+4. A four-byte array begins at `0x2000`, contains 16 elements, and is indexed by an untrusted integer. Derive the address for element 15 and specify the checks needed before accessing an arbitrary index. Distinguish bounds from alignment.
 
-5. A struct has fields at offsets 0, 4, and 8. A driver reads offset 0 with `readl` and gets the right value, but offset 4 always reads as 0 even though the register exists. List the two most likely causes and the one read that distinguishes them.
+5. Research challenge: verify the immediate range and encoding of lw and sw. Show an instruction sequence for accessing base + 4096 without pretending that 4096 fits directly in their immediate field.
 
 ## Limits
 
-This chapter assumes aligned access. RISC-V allows unaligned loads/stores in many configurations, but device registers often do not — an unaligned access to MMIO can trap or return garbage. Compressed instructions (2-byte) also change instruction sizes, which matters for PC arithmetic in Chapter 07.
+Examples assume ordinary accessible RAM, no concurrent modifications, and a base integer execution model. Atomic memory operations are additional instructions, so base loads and stores are not the only memory operations in the full RISC-V family. Compiler pointer and aliasing rules remain relevant to C source.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
+- [RV64 loads and stores](https://docs.riscv.org/reference/isa/unpriv/rv64.html) — verify lw, lwu, and full-width behavior.
+- [Base integer instruction formats](https://docs.riscv.org/reference/isa/unpriv/rv32.html) — compare load and store immediate layouts.
 
 ## Related
 
-Chapter 05, Chapter 07
+- [Chapter 05 — Instructions and the RISC-V ISA](05_instructions_and_the_risc_v_isa.md)
+- [Chapter 07 — Branches, Jumps, and Control Flow](07_branches_jumps_and_control_flow.md)

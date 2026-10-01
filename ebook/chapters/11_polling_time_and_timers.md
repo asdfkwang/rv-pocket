@@ -1,92 +1,92 @@
 # Chapter 11 — Polling, Time, and Timers
 
-> **Part III — CPU Meets Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part III — CPU Meets Hardware**
 
-## Why This Matters
+## How long should software wait?
 
-Software often needs to wait: wait for a device to be ready, wait for a byte to arrive, wait for a timeout. The simplest way is **polling** — repeatedly reading a status register until the condition holds. Polling works but wastes CPU. The alternative is a **timer** that lets software sleep or measure intervals.
+Chapter 10 explained how to test status correctly. A correct test inside an unbounded loop can still hang forever. Polling means repeatedly observing a condition until it holds. A useful poll needs both a success condition and a deadline, plus a policy for what happens between observations.
 
-## Core Idea
+Suppose the UART transmitter is busy. Its STATUS bit 0 means another byte may be accepted. Before writing TX_DATA, software waits for that bit. The readiness transition comes from hardware, so counting source-level loop iterations is not a reliable measure of elapsed time.
 
-A timer is a hardware counter that increments at a known rate (e.g., every microsecond). Software reads the counter to measure elapsed time, or writes a compare value to trigger an interrupt when the counter reaches it. Polling is a loop: read status, check condition, repeat. A delay loop is polling with a counter.
+## Build a bounded poll
 
-## Worked Example
-
-Poll until TX ready:
+Assume a monotonically advancing 32-bit timer that increments once per microsecond. The following is pseudocode, not a Linux API implementation:
 
 ```text
-loop:
-  lw   t0, STATUS(x10)     # read status
-  andi t0, t0, 0x01        # mask bit 0 (TX ready)
-  beq  t0, x0, loop        # if not ready, loop
-  # TX is ready, write data
+start = timer32()
+repeat:
+    status = read_uart_status()
+    if status & 1:
+        write_uart_tx(0x41)
+        return success
+    elapsed = unsigned32(timer32() - start)
+    if elapsed >= 500:
+        return timeout
+    wait_before_next_poll_if_context_allows()
 ```
 
-Timer-based delay (1 million cycles):
+Here, readiness observed on an iteration wins even if the later timeout test would also have expired. That is a deliberate policy. If the device protocol demands an absolute completion deadline, define and check that stronger requirement explicitly. A generic timeout does not magically make a late hardware action disappear.
 
-```text
-  li   t0, 1000000         # delay amount
-  rdtime t1                # read current time
-  add  t1, t1, t0          # target = now + delay
-wait:
-  rdtime t2                # read current time
-  bltu t2, t1, wait        # loop until now >= target
-```
+A sample trace makes the cost visible:
 
-## The Same Idea Elsewhere
+| Time in microseconds | Ready bit | Decision |
+| --- | --- | --- |
+| 1000 | 0 | remember start, continue |
+| 1100 | 0 | elapsed 100, continue |
+| 1250 | 1 | submit byte, stop polling |
 
-- **Hardware:** the timer is a counter register and a compare register. When they match, an interrupt fires.
-- **RISC-V:** the `time` CSR (or `rdtime` pseudo-instruction) reads the timer. The privileged spec defines timer interrupts.
-- **OS:** the OS uses timer interrupts for scheduling — every tick, the timer fires and the scheduler decides whether to switch tasks.
-- **Linux/driver:** drivers use `udelay`/`mdelay`/`msleep` for short waits. For longer waits, they sleep and let the scheduler run other tasks.
+If readiness never arrives, a sample at or after 1500 ends the wait. Actual return time can be later because scheduling or access latency delays observations. The timeout expresses when software should stop waiting, not a guarantee of exact wakeup timing.
 
-## When It Fails
+## Counter wraparound is arithmetic, not a reset
 
-A driver polls a status bit in a tight loop with no timeout. The device never sets the bit (hardware bug, wrong initialization), and the driver hangs forever. The fix is a timeout counter: poll at most N times, then return an error. Polling without a timeout is a hang waiting to happen.
+Let start be `0xFFFFFFF0` and a later timer read be `0x00000020`. Unsigned 32-bit subtraction yields `0x30`, or 48 ticks. A direct comparison of end and start would misinterpret the wrap as time going backward.
+
+Modular subtraction works when the true elapsed interval is representable within one counter period. Software must sample often enough and bound its wait so it cannot silently miss an entire wrap. A stopped timer or one whose frequency changes violates the assumptions as surely as a wrong arithmetic expression.
+
+A delay loop such as repeatedly decrementing a register has different problems: CPU frequency, instruction timing, interrupts, and compiler optimization affect its duration. Use the platform or OS timekeeping interface whose behavior is documented for the current context.
+
+## Busy waiting, sleeping, and timer events
+
+A busy poll keeps executing. That can be appropriate for a very short wait or a context in which sleeping is forbidden. For longer waits in sleepable context, yielding the CPU lets other work run, at the cost of detection latency. The condition still needs rechecking when execution resumes.
+
+A timer compare facility can request an event when the counter reaches a programmed value. It helps software avoid continuously reading the counter, but event generation and actual handler execution are separate boundaries. Interrupt masking or higher-priority work can delay service.
+
+Consider a reset that takes 50 ms typically and 200 ms at the documented maximum. Waiting a fixed 100 ms neither verifies completion nor covers the allowed worst case. Prefer the documented completion condition with a deadline that accounts for the maximum and relevant margins. On timeout, report failure and put hardware in a known safe state rather than continuing as if reset completed.
+
+Chapter 12 replaces repeated device polling with a notification mechanism. Timeouts remain necessary because a notification or the underlying operation can still fail.
 
 ## Check
 
-1. A driver polls a status register in a loop. The device never sets the expected bit. What is the most likely outcome?
-   - A) The driver returns an error immediately
-   - B) The driver loops forever
-   - C) The CPU traps and the OS kills the process
-   - D) The driver skips the poll and continues
-   - Answer: B
-   - Explanation: A polling loop with no exit condition other than the bit being set will loop forever if the bit never sets. The driver needs a timeout.
-   > Hint: What ends a polling loop? Only the condition being true — or a timeout.
-
-2. A timer increments every microsecond. Software reads it, waits 500 microseconds, then reads it again. What is the expected difference?
-   - A) 500
-   - B) 500000
-   - C) 0
-   - D) It depends on the CPU frequency
+1. A 32-bit timer changes from `0xFFFFFFF0` to `0x00000020` with at most one wrap. What elapsed value does unsigned subtraction produce?
+   - A) 48
+   - B) -4294967248
+   - C) 32
    - Answer: A
-   - Explanation: 500 microseconds × 1 increment per microsecond = 500 increments. The timer measures time in its own units.
-   > Hint: The timer rate is given. Multiply time by rate.
+   - Explanation: Modular subtraction retains the low 32 bits, giving 0x30.
 
-3. Which of these are advantages of timer interrupts over polling? Pick all that apply.
-   - A) The CPU can sleep instead of spinning
-   - B) The CPU can run other tasks while waiting
-   - C) Timer interrupts are always faster than polling
-   - D) Timer interrupts use less power
-   - Answer: A, B, D
-   - Explanation: Interrupts let the CPU do other work (or sleep) while waiting. Polling burns CPU cycles. C is false — polling can be faster for very short waits because it avoids interrupt overhead.
-   > Hint: What does polling do with the CPU? What does an interrupt let the CPU do?
+2. Which guarantees does the bounded poll provide under its assumptions? Select all that apply.
+   - A) It has a path out when readiness never arrives.
+   - B) Its return happens at exactly 500 microseconds.
+   - C) It checks device status rather than inferring completion from a typical delay.
+   - Answer: A, C
+   - Explanation: Scheduling and access latency affect observation time; the condition and deadline govern the decision.
 
-4. Explain why a delay loop (`for (i = 0; i < N; i++);`) is unreliable on a modern CPU — what factors make the actual delay unpredictable?
+3. Construct a trace in which a device becomes ready just before the deadline but software does not run until after it. Explain how condition-first and deadline-first policies differ.
 
-5. A driver uses `mdelay(100)` to wait for a device to reset. The device datasheet says reset takes 50ms typical, 200ms maximum. Is `mdelay(100)` safe? What should the driver do instead?
+4. Compare a 1-microsecond and a 1-millisecond polling interval for a device usually ready after 30 microseconds. Identify costs, detection delay, and the execution contexts that constrain the choice.
+
+5. Research challenge: inspect Linux `readl_poll_timeout` and its atomic variant in `include/linux/iopoll.h`. Identify the time units, final condition check, and sleep-related restrictions. Explain which variant fits a sleepable probe path and why.
 
 ## Limits
 
-This chapter assumes a simple timer. Real systems have multiple timers (per-core, per-cluster), dynamic tick rates, and clock sources that can change. Timer interrupts are the foundation of OS scheduling (Chapter 17) and are revisited with controllers in Chapter 19.
+The timer model has a fixed frequency and uninterrupted progress. Real clock domains, power states, and split-width counter reads require platform rules. Kernel polling helpers should be used according to their current documented context and timeout semantics.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Driver API (delays)](https://docs.kernel.org/driver-api/basics.html)
+- [Linux polling helpers](https://github.com/torvalds/linux/blob/master/include/linux/iopoll.h) — read the helper implementation and comments for the research task.
+- [Linux delay and sleep functions](https://docs.kernel.org/timers/delay_sleep_functions.html) — choose a waiting mechanism for the calling context.
 
 ## Related
 
-Chapter 10, Chapter 12
+- [Chapter 10 — Device Registers](10_device_registers.md)
+- [Chapter 12 — Interrupts: Hardware Wants Attention](12_interrupts_hardware_wants_attention.md)

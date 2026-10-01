@@ -1,89 +1,95 @@
 # Chapter 32 — DMA in a Real Linux Driver
 
-> **Part VII — Linux Device Drivers**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VII — Linux Device Drivers**
 
-## Why This Matters
+## How do the DMA concepts map to Linux calls?
 
-DMA (Chapter 22) lets a device transfer data without the CPU. In Linux, a driver uses the DMA API to map buffers for device access. The API handles address translation, cache coherency, and mapping lifetime. Using it wrong causes data corruption, crashes, and security vulnerabilities.
+Chapters 22–23 established three obligations: use a device-visible address, transfer ownership correctly, and establish the required visibility/order. Linux's DMA API expresses these obligations without making a driver hard-code one cache or IOMMU implementation.
 
-## Core Idea
+Use a device that reads a 16-byte transmit buffer. During setup, the driver selects a DMA mask supported by the actual hardware and platform, checks the result, and refuses unsupported configurations. A 32-bit address register cannot safely receive an unchecked truncated 64-bit DMA address.
 
-A driver maps a buffer with `dma_map_single` (for a single buffer) or `dma_map_sg` (for scatter-gather). The API returns a DMA address that the device can use. The driver programs the DMA engine with this address. When the transfer is done, the driver unmaps with `dma_unmap_single` or `dma_unmap_sg`. The API handles cache coherency at map and unmap time.
+## Trace a successful streaming mapping
 
-## Worked Example
+The following fragments illustrate a kmalloc-backed transmit buffer and the normal successful lifecycle. The device-specific fill, submission, and completion protocol must be supplied by the driver.
 
 ```c
-// Map a buffer for DMA
-dma_addr_t dma_handle = dma_map_single(dev, buf, len, DMA_TO_DEVICE);
-if (dma_mapping_error(dev, dma_handle)) {
-    // handle error
+void *buf = kmalloc(16, GFP_KERNEL);
+if (!buf)
+    return -ENOMEM;
+fill_payload(buf, 16);
+
+dma_addr_t addr = dma_map_single(dev, buf, 16, DMA_TO_DEVICE);
+if (dma_mapping_error(dev, addr)) {
+    kfree(buf);
+    return -EIO;
 }
-
-// Program the DMA engine
-writel(dma_handle, uart->base + UART_DMA_ADDR);
-writel(len, uart->base + UART_DMA_LEN);
-writel(UART_DMA_START, uart->base + UART_DMA_CONTROL);
-
-// ... later, after the interrupt ...
-dma_unmap_single(dev, dma_handle, len, DMA_TO_DEVICE);
+/* Submit addr and length 16; leave payload untouched while device owns it. */
 ```
 
-The driver never touches the DMA address directly — it passes it to the device.
+The CPU retains buf for allocation/lifetime management. Hardware receives addr, a dma_addr_t value interpreted in its DMA address space. Do not give hardware buf, and do not cast addr to a CPU pointer to inspect payload.
 
-## The Same Idea Elsewhere
+After the device protocol proves that all accesses to this transfer's buffer have ended:
 
-- **Hardware:** the DMA engine reads and writes memory directly. It uses physical (bus) addresses.
-- **RISC-V:** the CPU programs the DMA engine via MMIO (Chapter 09).
-- **OS:** the kernel provides the DMA API that handles mapping and coherency.
-- **Linux/driver:** the driver uses the DMA API to safely share buffers with devices.
+```c
+dma_unmap_single(dev, addr, 16, DMA_TO_DEVICE);
+kfree(buf);
+```
 
-## When It Fails
+The device, size, direction, and mapping kind must correspond to the mapping operation. If submission fails before hardware can access the buffer, unwind the mapping and allocation. If submission may have reached hardware, cancellation must establish quiescence before that unwind. The unmap call itself does not stop an engine.
 
-A driver maps a buffer, starts DMA, and immediately unmaps. The DMA engine is still reading the buffer. The driver frees the buffer. The DMA engine writes to freed memory. The fix: unmap only after the transfer is complete (after the interrupt).
+## Receive and reuse require explicit transitions
+
+For a receive buffer, use DMA_FROM_DEVICE when the device writes memory. After confirmed completion, ending the mapping with the matching unmap operation permits the CPU to consume the received contents under that lifecycle. If keeping the mapping across repeated transfers, use the appropriate sync-for-CPU and sync-for-device operations at ownership transitions.
+
+A reusable mapping saves some setup work but makes state management more explicit. The CPU must not inspect a device-owned buffer just because the pointer still exists. A stale payload can result from missing synchronization; a corrupted payload can also result from overlapping ownership, wrong length, or a device writing somewhere else. Diagnose which guarantee failed.
+
+For user buffers, subsystem-specific pinning and mapping rules apply. A userspace virtual pointer is not a suitable argument to dma_map_single. Pinning establishes page lifetime under its API; it does not by itself produce one contiguous device address for an arbitrary range. The full design must address scatter/gather layout, access permissions, unpinning, and cancellation.
+
+## Coherent descriptors and scatter/gather payloads
+
+dma_alloc_coherent returns a CPU-accessible pointer and a separate DMA handle for suitable shared control memory. It avoids streaming ownership synchronization for coherent visibility but does not remove descriptor ordering barriers or lifetime obligations. Pair it with the corresponding coherent free operation after hardware no longer accesses it.
+
+For a payload spanning multiple suitable segments, dma_map_sg maps a scatterlist. The returned mapped segment count can be smaller than the original entry count because mappings may merge segments. Program hardware using the mapped DMA segments, while passing the original input count to the corresponding unmap/sync API as documented. Confusing those counts creates architecture-dependent bugs.
+
+## Make timeout and removal first-class paths
+
+On timeout, stop accepting new submissions, halt/reset the relevant engine according to its protocol, synchronize completion paths, and reclaim mappings only after device access is impossible. Removal adds the same requirement for every outstanding buffer. Automatic resource cleanup cannot infer a safe DMA stop sequence.
+
+Chapter 33 moves outward to the userspace contract. Correct DMA movement is only one part of what an application's read or write result promises.
 
 ## Check
 
-1. A driver maps a buffer with `dma_map_single`. What address does it get?
-   - A) A kernel virtual address
-   - B) A user-space virtual address
-   - C) A DMA (bus) address
-   - D) A physical address
-   - Answer: C
-   - Explanation: `dma_map_single` returns a DMA address — the address the device uses. It may or may not equal the physical address (IOMMU).
-   > Hint: What address does the device understand? What does the API return?
-
-2. Which of these are true about the DMA API? Pick all that apply.
-   - A) It handles cache coherency
-   - B) It translates addresses for the device
-   - C) It can be used on any pointer
-   - D) It manages mapping lifetime
-   - Answer: A, B, D
-   - Explanation: The DMA API handles coherency (A), translates addresses (B), and manages lifetime (D). It must be used on appropriate buffers (C is false).
-   > Hint: What does the API do for you? What must you still do?
-
-3. A driver unmaps a DMA buffer before the transfer completes. What is the most likely outcome?
-   - A) The transfer succeeds
-   - B) The DMA engine writes to freed memory
-   - C) The kernel panics immediately
-   - D) The device stops working
+1. Which value should be programmed into a device's DMA address field?
+   - A) The CPU's buf pointer
+   - B) The validated DMA handle returned for that device and mapping
+   - C) Any physical address inferred by casting the pointer
    - Answer: B
-   - Explanation: If the buffer is freed while DMA is in progress, the engine may write to freed memory. This causes corruption or crashes.
-   > Hint: What is the DMA engine doing when the buffer is freed? Where does it write?
+   - Explanation: The mapping API accounts for the device's address view and platform constraints.
 
-4. Explain the difference between `dma_map_single` and `dma_map_sg` — when would you use each?
+2. Which are valid lifecycle obligations? Select all that apply.
+   - A) Check mapping failure.
+   - B) Match the unmap's size and direction to the mapping.
+   - C) Treat timeout as proof that DMA has stopped.
+   - Answer: A, B
+   - Explanation: Timeout only ends a software wait; safe reclamation requires completion or quiescence.
 
-5. A driver uses `dma_map_single` for a buffer, starts DMA, and the transfer completes. The driver reads the buffer but sees stale data. What is the most likely cause?
+3. Draw the complete ownership state machine for a persistent receive mapping used three times. Include the point at which each result may be read and the final unmap/free.
+
+4. dma_map_sg receives six entries and returns four DMA segments. Explain which count drives device programming and which count is used when unmapping. Describe the failure if the counts are interchanged.
+
+5. Research challenge: inspect an upstream driver's mapping failure and timeout paths at a recorded revision. Identify how it proves the device can no longer access a buffer before release, including any late IRQ or workqueue path.
 
 ## Limits
 
-This chapter shows simple DMA mapping. Real drivers use scatter-gather lists, DMA rings, and IOMMU. The principle — map, transfer, unmap — is the same.
+The code fragments show one successful mapping shape, not a complete DMA driver. Hardware masks, descriptor formats, allocation restrictions, boundary limits, and DMA direction must match the actual device. Kernel DMA helpers do not replace the hardware's completion and reset protocol.
 
 ## Go Deeper
 
-- [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Driver API (DMA)](https://docs.kernel.org/driver-api/dma.html)
+- [Linux DMA mapping guide](https://docs.kernel.org/core-api/dma-api-howto.html) — inspect masks, mapping errors, coherent allocation, and scatter/gather counts.
+- [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html) — verify sync/unmap pairings and allocation restrictions.
+- [Linux pin_user_pages guidance](https://docs.kernel.org/core-api/pin_user_pages.html) — distinguish user-page lifetime from device mapping.
 
 ## Related
 
-Chapter 31, Chapter 33
+- [Chapter 31 — Sleeping, Waiting, and Asynchronous Events](31_sleeping_waiting_and_asynchronous_events.md)
+- [Chapter 33 — Exposing Devices to Userspace](33_exposing_devices_to_userspace.md)

@@ -1,80 +1,77 @@
 # Chapter 14 — Privilege: M, S, and U
 
-> **Part IV — Protection and the Operating System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part IV — Protection and the Operating System**
 
-## Why This Matters
+## What prevents an application from becoming the kernel?
 
-A user program must not be able to read another program's memory, access devices directly, or crash the system. **Privilege levels** enforce this: the CPU has modes, and each mode can do more than the one below. RISC-V has three: **M** (Machine, most privileged), **S** (Supervisor, the OS), and **U** (User, applications).
+Chapter 13 used a trap to enter privileged software. If applications could freely modify the handler address or turn off protection, this boundary would offer no isolation. Privilege levels make some operations available only to software already holding the required authority.
 
-## Core Idea
+RISC-V names machine mode M, supervisor mode S, and user mode U. M is the most privileged of these levels. Implementations and execution environments differ in which additional modes they support. Our Linux-oriented machine uses firmware in M-mode, a kernel in S-mode, and applications in U-mode. This arrangement is a system design choice supported by the architecture, not a claim that every RISC-V system runs Linux.
 
-The CPU tracks the current privilege level. Certain instructions and CSRs are only accessible in higher levels. A user program that tries to execute a privileged instruction triggers a trap. The OS runs in S-mode; firmware runs in M-mode; applications run in U-mode. The OS uses S-mode to protect itself from applications and to manage hardware access.
+## Follow an allowed request and a forbidden operation
 
-## Worked Example
+A user program wants to print `A`. Writing the UART's physical address is not part of its ordinary accessible virtual address space. Instead, it issues a write system call. Hardware transfers to a trap entry configured by more privileged software. The kernel validates the descriptor, buffer, and permissions before requesting device work.
 
-A user program tries to read the `time` CSR:
+Contrast that with a U-mode attempt to write a supervisor control register. The instruction's privilege check rejects the operation with an illegal-instruction exception. The application does not become supervisor merely by knowing the CSR's number. Knowledge of an address or opcode is not authority to use it.
 
 ```text
-# User program (U-mode)
-rdtime t0        # read timer
+allowed route:
+U-mode request -> trap entry -> kernel validation -> authorized device operation
+
+forbidden shortcut:
+U-mode CSR write -> privilege check fails -> exception handling
 ```
 
-On a system where `time` is M-mode only, this instruction traps. The trap handler (in M-mode or S-mode) decides: emulate the read, kill the program, or allow it. On systems where `time` is accessible from U-mode, the read succeeds.
+The permitted route includes a policy decision. A system call is a request, not a guarantee that the requested action will be granted. The kernel can return an error without touching the device.
 
-## The Same Idea Elsewhere
+## Which layer controls which mechanism?
 
-- **Hardware:** the privilege level is a CPU state bit. Each instruction and CSR has a minimum privilege level. The hardware enforces access.
-- **RISC-V:** the privileged spec defines M/S/U modes, the `mstatus` CSR (which tracks current mode), and the trap mechanism for privilege violations.
-- **OS:** the OS runs in S-mode. It uses S-mode to manage memory (MMU), schedule tasks, and handle system calls. M-mode is reserved for firmware.
-- **Linux/driver:** Linux runs in S-mode. Drivers run in kernel space (S-mode, ring 0 equivalent). User programs run in U-mode. The boundary is enforced by the CPU.
+The supervisor manages the application's page tables and uses S-mode trap registers. Firmware retains machine-level facilities and can expose selected services through a defined interface. Machine software configures delegation so certain traps are handled directly by the supervisor. Delegation does not erase the distinction between modes or let a user select arbitrary entry code.
 
-## When It Fails
+Memory isolation involves more than the current mode. Translation permissions, physical memory protection where configured, and device/interconnect access controls can also constrain accesses. Conversely, privileged kernel code can still contain an invalid pointer or an ordering bug. Privilege expands permitted operations; it does not establish their correctness.
 
-A driver tries to access a device register directly from user space. The CPU traps because the address is in a privileged region. The driver should have used a system call (like `mmap` or `ioctl`) to request access through the OS. The bug is not the access — it is bypassing the privilege boundary.
+A return-from-trap instruction uses saved status to restore the appropriate mode and continuation. It is not interchangeable with an ordinary function return, which jumps through a general register. Treating a user-to-kernel transition as merely a function call misses both the authority change and the special entry/exit responsibilities.
+
+## Separate kernel services from firmware services
+
+Suppose an S-mode driver needs a facility controlled by M-mode. Directly accessing a machine CSR may trap because supervisor privilege is insufficient. The solution depends on the platform contract: the kernel may use an SBI service, a delegated architectural facility, or a platform driver interface. Guessing a CSR access is not a substitute for discovering that contract.
+
+Chapter 25 later follows an SBI call with concrete registers. For now, distinguish two requests: a user system call asks the OS for a service; an SBI call asks a lower-level execution environment for a service. Both can use ecall, but their originating modes, arguments, and handlers differ.
+
+The next chapter builds OS policy on top of these mechanisms. Hardware can enforce a boundary; software still decides which process owns a file, which operations are permitted, and what a successful request means.
 
 ## Check
 
-1. A user program (U-mode) tries to execute an M-mode instruction. What happens?
-   - A) The instruction executes normally
-   - B) The CPU traps and transfers control to a higher-privilege handler
-   - C) The instruction is ignored
-   - D) The CPU shuts down
+1. A U-mode instruction attempts an unauthorized supervisor CSR write. Which outcome matches the privilege boundary?
+   - A) Knowing the CSR number grants access.
+   - B) The operation raises an illegal-instruction exception.
+   - C) It automatically becomes a successful system call.
    - Answer: B
-   - Explanation: Privilege violations cause a trap. The handler (in M-mode or S-mode) decides what to do — usually kill the program.
-   > Hint: What does the CPU do when software tries something it is not allowed to do?
+   - Explanation: Privilege checks apply to the instruction; they do not reinterpret an unauthorized access as an approved request.
 
-2. Which of these are true about privilege levels? Pick all that apply.
-   - A) M-mode is more privileged than S-mode
-   - B) S-mode is more privileged than U-mode
-   - C) User programs run in M-mode
-   - D) The OS typically runs in S-mode
-   - Answer: A, B, D
-   - Explanation: The order is M > S > U. User programs run in U-mode, not M-mode. The OS runs in S-mode.
-   > Hint: What does the 'S' in S-mode stand for? Who runs there?
+2. Select all correct statements about the chosen Linux-oriented arrangement.
+   - A) Kernel S-mode is more privileged than application U-mode.
+   - B) All RISC-V implementations must run this software arrangement.
+   - C) A kernel service can reject a validly delivered request.
+   - Answer: A, C
+   - Explanation: Hardware delivery and OS authorization are separate, and the software arrangement is not universal.
 
-3. Why does the OS run in S-mode rather than M-mode?
-   - A) S-mode is faster than M-mode
-   - B) M-mode is reserved for firmware; S-mode is for the OS
-   - C) S-mode has more registers than M-mode
-   - D) M-mode cannot access memory
-   - Answer: B
-   - Explanation: M-mode is the most privileged level, reserved for firmware (Chapter 24). The OS runs in S-mode, which is privileged enough to manage hardware but leaves M-mode for firmware.
-   > Hint: What runs in M-mode? What is the OS's role relative to firmware?
+3. Explain why preventing U-mode writes to trap-vector registers matters. Construct a failure of isolation if an application could replace the kernel's entry address with its own code and enter it privileged.
 
-4. Explain how a user program requests a privileged operation (like reading a file) — what instruction triggers the transition, and what happens on the other side?
+4. A driver sees an illegal-instruction trap on a CSR operation. Propose a diagnosis that distinguishes an unsupported CSR from insufficient privilege. Specify the evidence needed before choosing a firmware service as the replacement.
 
-5. A driver runs in S-mode and tries to access an M-mode CSR. What happens, and what should the driver do instead?
+5. Research challenge: inspect machine-level delegation registers and supervisor return rules. Identify one case that can be delegated and explain why delegation is not a general permission for supervisor software to access machine CSRs.
 
 ## Limits
 
-This chapter shows three privilege levels. Some systems use only M and U (no S-mode). Virtualization adds another layer (Hypervisor mode). The principle — hardware-enforced privilege boundaries — is the foundation of system security.
+We omit hypervisor virtualization, detailed PMP configuration, and optional privilege extensions. Memory permissions are developed in Chapters 20–21. Whether a specific instruction or resource is accessible depends on the configured environment, not only its name.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Kernel Privilege](https://docs.kernel.org/arch/riscv/index.html)
+- [RISC-V machine-level architecture](https://docs.riscv.org/reference/isa/priv/machine.html) — inspect privilege checks, delegation, and physical protection.
+- [RISC-V SBI specification](https://github.com/riscv-non-isa/riscv-sbi-doc) — identify the supervisor-to-firmware interface distinct from user system calls.
 
 ## Related
 
-Chapter 13, Chapter 15
+- [Chapter 13 — Exceptions, Traps, and System Calls](13_exceptions_traps_and_system_calls.md)
+- [Chapter 15 — What an Operating System Actually Does](15_what_an_operating_system_actually_does.md)

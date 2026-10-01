@@ -1,94 +1,91 @@
 # Chapter 40 — From Power-On to Userspace
 
-> **Part VIII — A Complete System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VIII — A Complete System**
 
-## Why This Matters
+## What has to succeed before userspace can print one byte?
 
-Everything in this book comes together in one path: power on → firmware → kernel → drivers → input/display/audio → user program. A single missing step anywhere in this chain breaks the entire system. This chapter is the capstone: trace the whole path, name every handoff, and see which chapters each step depends on.
+Chapter 01 began with a running application's write. We can now explain the prerequisites that made that request possible: working instruction execution and memory, a valid boot handoff, privileged kernel state, device discovery, drivers, a runnable process, and a configured output path.
 
-## Core Idea
+Use a conceptual RV64 system booting Linux in S-mode with machine firmware services. The kernel image begins at physical `0x80200000`, a 2 MB-aligned location. A device tree occupies `[0x88000000, 0x88008000)`. Assume both regions lie in working RAM, satisfy the actual image/reservation contract, and do not overlap other live boot artifacts. These addresses illustrate bookkeeping, not a universal board layout.
 
-Boot is a chain of handoffs. Power-on starts firmware (Chapter 24). Firmware hands off to the kernel via SBI (Chapter 25). The kernel finds hardware through the device tree (Chapter 26). Drivers claim devices (Chapter 28) and access registers (Chapter 29). Interrupts (Chapter 30) and DMA (Chapter 32) move events and data. The input subsystem (Chapter 35) and display (Chapter 36) deliver user interaction. Then a program runs (Chapter 33).
+## Make each handoff explicit
 
-## Worked Example
+| Stage | Required input | Established result | Useful evidence |
+| --- | --- | --- | --- |
+| Reset/early firmware | platform reset state | enough execution and memory to continue | early entry marker or debugger |
+| Loader/firmware handoff | valid images and live description | kernel entry under its register/mode contract | entry PC, a0/a1, memory contents |
+| Early kernel | valid handoff and accessible memory | kernel mappings, stacks, traps, allocators | early progress markers, fault metadata |
+| Device discovery | firmware description and available drivers | resources matched and initialized | populated devices, probe outcomes |
+| Root filesystem | working storage path or suitable early userspace | filesystem containing executable init | mount result and executable presence |
+| Initial userspace | executable and runtime requirements | first userspace process can run | exec success, process/scheduling evidence |
+| Output service | configured device/subsystem and user setup | bytes accepted and eventually transmitted | syscall result, queue/device/line observations |
+
+A successful row does not prove the next one. Firmware output can work before the kernel's normal console driver exists. A mounted root filesystem can lack the requested init executable. A running init can fail to start a login service even though the kernel is healthy.
+
+## Follow the first process into its write
+
+Assume the root filesystem contains a usable statically linked init program, avoiding a dynamic-interpreter dependency in this first trace. The kernel establishes its userspace mapping and initial execution state, then transfers to it under the architecture's return/entry rules. Scheduling gives its thread CPU time.
+
+The program opens an appropriate output resource and obtains a descriptor. It supplies an accessible buffer containing `0x41`, requests one byte, and enters the kernel through the system-call convention. The kernel dispatches the operation through the chosen object, and the device path eventually transmits the byte according to the queue and hardware protocol.
 
 ```text
-1. Power on
-   CPU starts at reset vector → firmware (M-mode)
-
-2. Firmware initializes DRAM, UART
-   Loads kernel, jumps to kernel entry
-
-3. Kernel starts (S-mode via SBI)
-   Parses device tree → finds UART, GPIO, display, storage
-
-4. Drivers probe and initialize
-   Drivers claim registers, request IRQs, map DMA buffers
-
-5. Kernel mounts root filesystem
-   Starts first user process (init)
-
-6. init starts services
-   Login prompt appears — a user-space program is running
-
-7. User presses a button
-   GPIO interrupt → driver → input subsystem → application reacts
-
-8. Application updates the display
-   CPU writes frame → DMA → display controller → screen
+image and boot state
+  -> running kernel with resources
+  -> mapped userspace program and execution state
+  -> descriptor-associated operation
+  -> queued byte and device submission
+  -> physical output and receiver observation
 ```
 
-## The Same Idea Elsewhere
+This is the same byte from Chapter 01, now with the hidden prerequisites exposed. The CPU need not know what a login prompt is. The kernel need not know what the letter means to the human. Each layer must satisfy a narrower contract that allows the next layer's interpretation.
 
-Every step in this chain has been covered. The power-on path exercises MMIO (Chapter 09), device registers (Chapter 10), timing (Chapter 11), interrupts (Chapter 12), privilege (Chapter 14), virtual memory (Chapter 20), the device tree (Chapter 26), and drivers (Chapters 27–33). The user-space path adds file I/O (Chapter 34) and cross-layer debugging (Chapter 39).
+## Resolve a root-device dependency loop
 
-## When It Fails
+Suppose the root filesystem lives on storage whose driver is available only as a module stored on that same filesystem. The kernel cannot load the module until it can read the filesystem, but cannot read it without the driver. A suitable design makes the needed driver available earlier, for example built into the kernel or supplied in an initramfs along with the userspace needed to load it.
 
-The system boots to firmware but never reaches the kernel. The cause is a missing clock enable in the firmware. The driver would have caught this (Chapter 28), but the firmware runs before any driver. This is why boot failures are special: the debugging tools you would normally use (drivers, dmesg) are not yet running.
+This is a dependency problem, not a reason to change the UART address because no login prompt appears. The output symptom is far downstream. The last confirmed stage and the first failed dependency locate the useful investigation.
+
+Dynamic executables introduce another prerequisite: the interpreter and libraries expected by the executable format must be available. A file named init existing on disk is therefore not enough to prove it can execute. Permissions, format, architecture, and runtime dependencies all belong to that boundary.
+
+## Diagnose a silent system in stages
+
+If firmware prints but no kernel output appears, inspect entry and early console evidence before assuming the kernel never executed. If the kernel reaches device discovery but root mounting fails, inspect the storage-description/driver/filesystem path. If init runs but no login appears, inspect userspace service and console configuration.
+
+For each hypothesis, name a test and the decision it enables. A boot log is valuable, but absence of a message can mean either the stage did not run or its logging path failed. Alternate observations can distinguish those cases. Record the boot artifacts, configuration, hardware description, and source revision so the investigation can be repeated.
 
 ## Check
 
-1. The system boots but no login prompt appears. The firmware runs correctly. What is the next layer to check?
-   - A) The device tree
-   - B) The root filesystem
-   - C) The GPIO driver
-   - D) The display driver
-   - Answer: B
-   - Explanation: The kernel is running. The login prompt requires the root filesystem to be mounted and init to start. If the root filesystem is not mounted, no user-space program runs.
-   > Hint: What does the kernel need before it can start user space? What provides that?
-
-2. Which of these are part of the power-on path? Pick all that apply.
-   - A) Firmware
-   - B) SBI handoff
-   - C) Device tree parsing
-   - D) DMA cache coherency
-   - Answer: A, B, C
-   - Explanation: Firmware (A), SBI handoff (B), and device tree parsing (C) are part of boot. DMA cache coherency (D) is about data transfers, not boot itself.
-   > Hint: What runs first? What does the kernel need? What is not part of boot?
-
-3. The system boots to firmware but never reaches the kernel. The firmware runs correctly. What is the most likely cause?
-   - A) A missing clock enable in the firmware
-   - B) The driver is not compiled into the kernel
-   - C) The device tree is wrong
-   - D) The GPIO driver is broken
+1. The kernel mounts root successfully, but the configured init is a dynamic executable whose interpreter is absent. Which boundary needs investigation?
+   - A) Executable loading/runtime requirements
+   - B) The reset address must be wrong.
+   - C) UART baud rate necessarily caused the failure.
    - Answer: A
-   - Explanation: The firmware runs before any driver. A missing clock enable prevents the firmware from completing its job. The kernel is never reached.
-   > Hint: What runs before the kernel? What debugging tools are available at that point?
+   - Explanation: Earlier progress narrows the problem; a present executable can still lack a required interpreter.
 
-4. Trace the complete power-on path from power to login prompt. Name every handoff and identify which chapter covers each step.
+2. Which facts do not alone prove a login prompt will appear? Select all that apply.
+   - A) Firmware output works.
+   - B) A device driver probed successfully.
+   - C) The kernel started an initial userspace process.
+   - Answer: A, B, C
+   - Explanation: Console routing and userspace service behavior remain later boundaries.
 
-5. The system boots to the kernel but crashes during driver initialization. List three possible causes and the one diagnostic tool you would use first.
+3. Draw a boot dependency graph for a root filesystem on a device requiring a driver module. Show how an initramfs or built-in driver breaks the cycle, including the supporting filesystems and executable dependencies.
+
+4. Trace one byte from an init program's buffer to a receiver. Label virtual, physical, and device-facing state where relevant, and mark every point where acceptance differs from completion. State which mechanisms are optional for your chosen device path.
+
+5. Capstone research: select a real RISC-V platform, firmware revision, kernel revision, hardware description, and userspace image. Produce a boot-to-output ledger containing each handoff, its documented preconditions, and a testable observation. Identify one failure you can explain at each of three different boundaries without relying on episode behavior.
 
 ## Limits
 
-This chapter shows a single-path boot. Real systems have recovery paths, multiple kernels, and network booting. The principle — a chain of handoffs, each depending on the previous one — is the same.
+Real boot chains vary in firmware, security policy, EFI/ACPI or device-tree use, early userspace, and console setup. The example deliberately fixes one path so its dependencies can be traced. The method transfers by replacing each assumed contract with the chosen platform's documented one.
 
 ## Go Deeper
 
-- [Linux Boot](https://docs.kernel.org/admin-guide/boot.html)
-- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
+- [RISC-V Linux boot requirements](https://docs.kernel.org/arch/riscv/boot.html) — verify the early handoff and mapping requirements.
+- [Linux initramfs documentation](https://docs.kernel.org/filesystems/ramfs-rootfs-initramfs.html) — follow early userspace and root-filesystem responsibilities.
+- [Linux init debugging guidance](https://docs.kernel.org/admin-guide/init.html) — inspect why an initial executable may fail to run.
+- [Linux serial driver API](https://docs.kernel.org/driver-api/serial/driver.html) — connect the final output path to its device-facing contract.
 
 ## Related
 
-Chapter 39
+- [Chapter 39 — Bugs Across Layers](39_bugs_across_layers.md)

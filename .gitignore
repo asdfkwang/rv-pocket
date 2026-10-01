@@ -10,8 +10,7 @@ dist
 *.tgz
 
 # Blender autosave / backup intermediates
-*.blend[0-9]
-*.blend1
+*.blend[0-9]*
 
 # Blender render output (WIP assets; regenerate with scripts/build-pocket-*.py)
 assets/logo-3d*.png

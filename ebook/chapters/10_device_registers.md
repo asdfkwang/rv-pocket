@@ -1,94 +1,81 @@
 # Chapter 10 — Device Registers
 
-> **Part III — CPU Meets Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part III — CPU Meets Hardware**
 
-## Why This Matters
+## Why is a register not ordinary storage?
 
-A device is controlled by writing values to its registers and reading status from them. Every driver is mostly register manipulation. When a device does nothing or behaves erratically, the cause is usually a wrong value in a register — wrong bit, wrong offset, or wrong timing.
+Chapter 09 located the UART registers. Knowing the correct address is only the beginning: each register defines a protocol. A write can replace a stored value, start work, clear an event, or feed a FIFO. A read can observe status or consume information. Correct driver code follows that protocol even when the instructions resemble ordinary memory accesses.
 
-## Core Idea
+Use the teaching UART map from Chapter 09. All accesses are aligned 32-bit operations. STATUS is read-only; RX_DATA consumes a byte. IRQ_STATUS contains latched event bits: bit 0 means a receive event, bit 1 an error event. Writing a one clears the corresponding latch; writing zero leaves it unchanged. These are W1C, or write-one-to-clear, semantics.
 
-A device has a set of registers at fixed offsets from its base address. Each register has a documented meaning: some are **control** (write to configure), some are **status** (read to check state), some are **data** (read/write to transfer). Registers may have **bit fields** — individual bits or groups of bits with separate meanings.
+## A read can change the next read
 
-## Worked Example
+Suppose the receive FIFO, a first-in first-out queue, contains bytes `41 42`. STATUS bit 1 is set. The first RX_DATA read returns `41` and removes it, leaving `42`. The second returns `42` and empties the FIFO. STATUS bit 1 then clears.
 
-A simplified UART:
+| Operation | Returned low byte | FIFO afterward | RX-ready |
+| --- | --- | --- | --- |
+| Read STATUS | status, not payload | `41 42` | 1 |
+| Read RX_DATA | `41` | `42` | 1 |
+| Read RX_DATA | `42` | empty | 0 |
 
-```text
-Base: 0x10000000
-+0x00  DATA    (read: received byte; write: byte to transmit)
-+0x04  STATUS  (bit 0: TX ready; bit 1: RX ready)
-+0x08  CONTROL (bit 0: enable TX; bit 1: enable RX; bits 31:16: baud divisor)
-```
+A debugger that reads RX_DATA to "inspect" it has performed a receive operation. The driver may subsequently see no byte because the observation consumed it. Prefer documented non-destructive status when investigating live hardware.
 
-To send `A` (0x41):
+## Read-modify-write has a hidden assumption
 
-```text
-1. Read STATUS until bit 0 is set (TX ready)
-2. Write 0x41 to DATA
-```
+For an ordinary read/write CONTROL register, assume all fields in the example are software-owned and writing preserved fields is permitted. Starting from `0x00000100`, enabling bit 0 should retain the upper configuration field. Reading, OR-ing with 1, and writing `0x00000101` does that. Writing the constant 1 would discard the existing configuration.
 
-To receive:
+Apply the same idea to IRQ_STATUS = `0x03`. You want to clear only bit 0. A tempting sequence reads 3, clears bit 0 in the CPU to get 2, then writes 2. The device interprets the written one in bit 1 as "clear the error event." Bit 0 remains set. The apparently careful update cleared the wrong event.
 
 ```text
-1. Read STATUS until bit 1 is set (RX ready)
-2. Read DATA to get the byte
+initial IRQ_STATUS:             0011
+correct acknowledgement write:  0001
+resulting IRQ_STATUS:            0010
 ```
 
-## The Same Idea Elsewhere
+The correct W1C acknowledgement is the mask of events you intend to clear, not a new desired register value. Even writing the original value OR 1 would clear both currently set events. The meaning of a one at the device boundary matters more than the source expression's familiar shape.
 
-- **Hardware:** each register is a small storage element wired to the device's logic. Writing CONTROL bit 0 enables the transmitter circuit.
-- **RISC-V:** the CPU accesses registers with normal load/store instructions (MMIO, Chapter 09). The ISA does not define device registers — they are platform-specific.
-- **OS:** the OS does not touch device registers directly; it lets drivers do so after verifying the driver has the right to the device.
-- **Linux/driver:** drivers use `readl`/`writel` (or `readb`/`writeb` for 8-bit registers) to access `__iomem` pointers. These functions handle byte ordering and barrier requirements.
+## Events have timing as well as values
 
-## When It Fails
+Suppose a receive event arrives after a driver reads IRQ_STATUS but before it acknowledges it. Whether that event remains pending depends on the device's latching and reassertion rules. W1C alone does not specify whether repeated occurrences of the same event are counted. A one-bit latch can collapse multiple events into one observation.
 
-A driver writes `0x01` to CONTROL to enable TX, but the device also has a "reset" bit at position 3. The driver's initialization code writes `0x09` (enable TX + reset), which resets the device every time it enables TX. The device works once, then resets on every subsequent enable. The bug is not the enable — it is the unintended reset bit.
+For the receive examples later, assume the UART reasserts the receive event if data remains after acknowledgement. The handler drains available bytes and acknowledges according to that contract. A real device may instead use level status, read-to-clear bits, or separate acknowledge registers. Its datasheet must settle the sequence.
+
+Read-modify-write also needs concurrency control when multiple software paths can update CONTROL. Two paths can read the same old value, modify different bits, and overwrite each other's changes. Chapter 18 addresses the software race. A lock cannot turn a W1C register into an ordinary read/write register.
+
+The next chapter asks how long software should wait for a status condition and what to do when it never arrives.
 
 ## Check
 
-1. A UART STATUS register has bit 0 = TX ready, bit 1 = RX ready. The value read is `0x03`. What can you conclude?
-   - A) TX is ready but RX is not
-   - B) RX is ready but TX is not
-   - C) Both TX and RX are ready
-   - D) The UART is disabled
-   - Answer: C
-   - Explanation: `0x03` = binary `11` — both bit 0 and bit 1 are set, so both conditions hold.
-   > Hint: Convert to binary. Which bits are 1?
-
-2. Which of these are common register access patterns? Pick all that apply.
-   - A) Read-modify-write to update specific bits
-   - B) Write-only registers that acknowledge commands
-   - C) Read-only status registers
-   - D) Registers that can only be written once per boot
-   - Answer: A, B, C
-   - Explanation: Read-modify-write is how you update bits without disturbing others. Write-only command registers and read-only status registers are common. D is rare — most registers can be written multiple times.
-   > Hint: Which of these is unusual? Most registers are written many times.
-
-3. A driver writes `0x00000001` to a CONTROL register to enable a feature. The register has bit 0 = enable, bits 31:16 = divisor. The feature does not work. Reading back the register shows `0x00010001`. What happened?
-   - A) The write was ignored
-   - B) The divisor field was set to 1 by mistake
-   - C) The enable bit was cleared by hardware
-   - D) The register is read-only
+1. IRQ_STATUS is 3. What write clears only event bit 0 under this W1C contract?
+   - A) 0
+   - B) 1
+   - C) 2
    - Answer: B
-   - Explanation: `0x00010001` has bits 16 set — the divisor field is 1, not 0. The driver probably wrote `0x00010001` instead of `0x00000001`, or a previous write set the divisor.
-   > Hint: Compare what was written with what was read. Where do they differ?
+   - Explanation: Ones select latches to clear. Writing 2 would clear bit 1 instead.
 
-4. Explain why `readl`/`writel` exist instead of plain dereference on `__iomem` pointers — what could go wrong with a plain read on a real system?
+2. Which observations can perturb the device? Select all that apply.
+   - A) Reading RX_DATA
+   - B) Writing IRQ_STATUS
+   - C) Every STATUS read necessarily consumes a byte
+   - Answer: A, B
+   - Explanation: RX_DATA pops data and IRQ_STATUS acknowledges events; STATUS is non-destructive in this model.
 
-5. A device has a "busy" bit in its STATUS register. A driver polls it in a tight loop but the bit never clears. List three possible causes and the one additional register read that would distinguish them.
+3. CONTROL starts at `0x100`. Path A enables bit 0 while path B enables bit 2 using separate read-modify-write sequences. Construct an interleaving that loses one update and show all values.
+
+4. A one-bit event latch is set twice before software services it. Explain why software cannot infer the event count from that bit alone. Identify an additional device mechanism that could preserve the missing information.
+
+5. Research challenge: choose a real peripheral datasheet and identify one register with non-ordinary access semantics. Record its width, read behavior, write behavior, reset value, and a safe acknowledgement sequence. Do not reuse the fictional UART assumptions without evidence.
 
 ## Limits
 
-This chapter shows simple read/write registers. Real devices have DMA (Chapter 22), interrupts (Chapter 12), and multi-byte register sequences. Some registers have side effects on read (clear-on-read) or write (trigger-on-write). Always read the device manual — the register map is the contract.
+The event reassertion rule and register ownership assumptions are explicit teaching contracts. Reserved bits, mixed access types within one register, atomic set/clear aliases, and silicon errata can require different update procedures on real devices.
 
 ## Go Deeper
 
-- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Driver Model](https://docs.kernel.org/driver-api/driver-model/)
+- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html) — identify accessor guarantees and their limits.
+- [Linux regmap interfaces](https://github.com/torvalds/linux/blob/master/include/linux/regmap.h) — inspect how register access policies are represented; the device documentation still defines the semantics.
 
 ## Related
 
-Chapter 09, Chapter 11
+- [Chapter 09 — How Devices Become Addresses](09_how_devices_become_addresses.md)
+- [Chapter 11 — Polling, Time, and Timers](11_polling_time_and_timers.md)

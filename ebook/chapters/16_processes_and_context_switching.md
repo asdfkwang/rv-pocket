@@ -1,84 +1,84 @@
 # Chapter 16 — Processes and Context Switching
 
-> **Part IV — Protection and the Operating System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part IV — Protection and the Operating System**
 
-## Why This Matters
+## How can one CPU continue two computations?
 
-A computer runs many programs at once — or so it seems. The OS creates this illusion by switching between them quickly. Each program is a **process**: an address space, a set of open files, and a saved CPU state. The switch between processes is a **context switch**: save one process's state, load another's.
+A process includes an address space and resource context. A thread is an execution stream within such a process; it has its own registers and stack. We begin with one thread per process, so switching process A to process B also switches their execution streams. Chapter 17 separates the two concepts explicitly.
 
-## Core Idea
+A context switch preserves enough execution state that a suspended thread can later continue. The kernel's records remain in memory while another thread uses the CPU's physical registers. A register's current hardware contents belong to the currently executing context, not permanently to a particular process.
 
-A process is the OS's representation of a running program. It has: an address space (memory), file descriptors (open files), and saved CPU state (registers, PC). The OS saves the CPU state when switching away from a process and restores it when switching back. The process never knows it was switched — the state is preserved exactly.
+## Preserve two different layers of continuation
 
-## Worked Example
+Suppose A is executing user code at `0x4008`, with a0 = 7. B previously stopped with a user continuation at `0x600C`, a0 = 99. A timer interrupt enters the kernel.
 
-Two processes, A and B:
+First, trap entry preserves A's interrupted user state in a trap frame. Kernel code then runs using its own execution context. If the scheduler selects B, a lower-level switch saves A's kernel continuation and restores B's. B resumes along its kernel return path and eventually restores its own user trap frame.
 
 ```text
-1. Process A is running
-2. Timer interrupt fires (Chapter 11)
-3. OS saves A's registers and PC to A's process control block
-4. OS loads B's registers and PC from B's process control block
-5. OS returns from the interrupt — now B is running
-6. Later, the reverse happens: B is saved, A is restored
+A user state -> A trap frame
+A kernel continuation -> saved switch context
+                         choose B
+B saved switch context -> B kernel continuation
+B trap frame -> B user state
 ```
 
-The switch is transparent to both processes. Each thinks it has the CPU to itself.
+This distinction explains an apparent contradiction: low-level switch code may save only a subset of registers, while arbitrary user registers still survive a preemption. The rest were preserved by another layer or are governed by the kernel call convention. A single routine need not save everything for the overall path to preserve everything required.
 
-## The Same Idea Elsewhere
+| Point | CPU's active computation | A's saved user a0 | B's saved user a0 |
+| --- | --- | --- | --- |
+| Before timer | A user code | not yet updated by this entry | 99 |
+| After A trap save | kernel handling A | 7 | 99 |
+| After switching to B | B kernel continuation | 7 | 99 |
+| After B return to user | B user code, a0 = 99 | 7 | saved frame no longer active |
 
-- **Hardware:** the CPU provides the trap mechanism (interrupts) that triggers the switch, and the CSRs that save/restore state.
-- **RISC-V:** the privileged spec defines the CSRs (`mepc`, `mstatus`, etc.) that are saved and restored.
-- **OS:** the OS is the software that decides when to switch and performs the save/restore.
-- **Linux/driver:** drivers must be context-switch-safe. A driver that assumes it runs to completion without interruption can corrupt state if a context switch happens mid-operation.
+A's next restoration recovers 7 unless the kernel intentionally changes its user state, for example to deliver a signal or syscall result. Preservation is a contract with specified interventions, not a promise that nothing about a process ever changes while it is stopped.
 
-## When It Fails
+## Memory context is separate from register context
 
-A driver uses a global variable to track state across multiple register accesses. A context switch happens between accesses. Another process runs, modifies the global, and when the first process resumes, the state is wrong. The fix: use per-device state, or disable interrupts during the critical section.
+A and B can use the same numeric user address for different memory. Switching between their address spaces selects the appropriate translation context, covered in Chapters 20–21. Threads sharing one process's address space may not need that change. Their stacks and execution registers still differ.
+
+Device registers do not roll back when a process is descheduled. Nor do global kernel variables automatically acquire private per-process copies. If A's driver path reads shared state, pauses, and B's path changes it, A resumes in a changed shared world. Preserving CPU registers does not make a multi-step shared operation atomic.
+
+## A switch is a scheduling decision, not every interrupt
+
+A timer can create an opportunity to reconsider which thread should run. The scheduler may select the same thread. A device interrupt can finish without switching at all. A voluntary blocking operation can switch execution without a timer event. Separate the cause of kernel entry from the policy decision to select another runnable thread.
+
+If a mutex owner is preempted, another thread may block waiting for it. That alone is contention, not necessarily deadlock. Progress depends on the owner eventually running and releasing the mutex. Deadlock requires a situation such as a circular wait that prevents that progress; Chapter 18 develops the distinction.
+
+The next chapter adds multiple threads sharing one address space and asks how the scheduler distinguishes running, runnable, and blocked work.
 
 ## Check
 
-1. A context switch occurs. What is saved?
-   - A) Only the PC
-   - B) Only the general-purpose registers
-   - C) The PC, general-purpose registers, and OS bookkeeping state
-   - D) Nothing — the CPU saves everything automatically
-   - Answer: C
-   - Explanation: The OS saves the PC and registers to the process control block. The OS also updates its own data structures (scheduler queues, etc.). The CPU does not save general-purpose registers automatically.
-   > Hint: What does the hardware save? What must software save?
+1. What can change while A is stopped even if A's private register state is correctly preserved?
+   - A) A shared device's state
+   - B) Nothing in the system
+   - C) A's saved PC must necessarily change
+   - Answer: A
+   - Explanation: Preserving one execution context does not freeze shared hardware or other threads.
 
-2. Which of these are part of a process's state? Pick all that apply.
-   - A) The program counter
-   - B) The stack pointer
-   - C) Open file descriptors
-   - D) The process's source code
-   - Answer: A, B, C
-   - Explanation: The PC, stack pointer, and file descriptors are all part of the process's runtime state. The source code is static — it does not change at runtime.
-   > Hint: What changes while a program runs? What stays the same?
+2. Which statements are correct? Select all that apply.
+   - A) Every interrupt must switch to a different thread.
+   - B) Trap-frame saving and low-level switching can preserve different subsets of state.
+   - C) Two threads sharing an address space still need separate execution state.
+   - Answer: B, C
+   - Explanation: Scheduling is a separate decision; the complete preservation path spans multiple layers.
 
-3. Why does a context switch make the illusion of parallelism?
-   - A) Because the CPU runs multiple instructions at once
-   - B) Because the switch is fast enough that each process seems to run continuously
-   - C) Because processes share the same memory
-   - D) Because the OS duplicates the CPU
-   - Answer: B
-   - Explanation: The switch is fast (microseconds). Each process runs for a short time, then switches. To human perception, all processes run simultaneously.
-   > Hint: How fast is a context switch? How does that compare to human perception?
+3. Extend the trace so A blocks during a system call rather than being preempted in user mode. Identify which continuation lets A finish the call after wakeup.
 
-4. Explain why a driver must be reentrant or use locks when it can be interrupted by a context switch — what goes wrong if two executions of the driver code overlap?
+4. A driver reads a global configuration value, is preempted, and later writes a derived value. Another thread updates the same configuration in between. Construct the lost update and explain why saving all CPU registers does not prevent it.
 
-5. A process is switched out while holding a lock. Another process tries to acquire the same lock. What happens, and what is this situation called?
+5. Research challenge: inspect Linux RISC-V entry and switch code for one pinned kernel revision. List where user registers and the kernel switch context are saved. Explain one register omitted by the low-level switch routine without concluding that it is lost.
 
 ## Limits
 
-This chapter shows a simple context switch. Real systems have nested interrupts, lazy state saving (only save what is used), and hardware support for address space switching (TLB, Chapter 21). The principle — save state, switch, restore — is the same.
+The single-CPU trace omits extension-state management, address-space optimizations, and detailed scheduler internals. Kernel and user stacks have distinct roles. Multicore execution adds genuine simultaneous access to the shared-state problem.
 
 ## Go Deeper
 
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Process Management](https://docs.kernel.org/process/)
+- [Linux RISC-V entry and switch assembly](https://github.com/torvalds/linux/blob/master/arch/riscv/kernel/entry.S) — inspect the complete preservation path at a recorded revision.
+- [Linux scheduler documentation](https://docs.kernel.org/scheduler/) — separate execution mechanism from selection policy.
 
 ## Related
 
-Chapter 15, Chapter 17
+- [Chapter 15 — What an Operating System Actually Does](15_what_an_operating_system_actually_does.md)
+- [Chapter 17 — Threads and Scheduling](17_threads_and_scheduling.md)

@@ -1,81 +1,76 @@
 # Chapter 19 — Cache and the Memory Hierarchy
 
-> **Part V — Memory Becomes Virtual**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part V — Memory Becomes Virtual**
 
-## Why The CPU is fast and memory is slow. A cache is a small, fast memory close to the CPU that holds copies of recently used data. Without a cache, every load would wait for DRAM. With a cache, most loads are hits. But a cache is a copy — and copies can be stale.
+## Which copy supplies a memory read?
 
-## Core Idea
+The earlier instruction traces described architectural values without explaining where those values were physically supplied. A cache keeps recently used memory close to a CPU so many accesses avoid slower lower levels. The question is which copy is valid, which copy is newer, and which observers participate in keeping them consistent.
 
-Memory is hierarchical: registers (fastest, smallest) → L1 cache → L2 cache → L3 cache → DRAM (slowest, largest) → storage (slowest, largest). Each level is bigger and slower than the one above. The cache exploits **locality**: temporal (recently used data is likely to be used again) and spatial (nearby data is likely to be used soon). A **cache line** is the unit of transfer (typically 64 bytes).
+Use a simplified write-back data cache with 64-byte lines. A line is the unit stored and tracked by this cache. Accessing address `0x2004` can bring the aligned range `0x2000` through `0x203F` into the cache. The requested byte or word is part of that line; neighboring bytes arrive as well.
 
-## Worked Example
+## Follow one dirty line
 
-```text
-CPU reads address 0x1000
-  → L1 miss (not in L1)
-  → L2 miss (not in L2)
-  → L3 miss (not in L3)
-  → DRAM read: fetch 64-byte line containing 0x1000
-  → line stored in L1, L2, L3
-  → data returned to CPU
-```
+Initially RAM at `0x2004` contains integer 7. The CPU reads it, obtaining a cached line. It then stores 9 to the same location. In a write-back policy, the cache may retain 9 while lower memory still holds 7. The line is dirty because it contains modifications not yet written back.
 
-The next read of 0x1004 (same line) is an L1 hit — fast. The line was fetched once and serves many reads.
+| Event | CPU cache value | Lower-memory value | State |
+| --- | --- | --- | --- |
+| Before access | absent | 7 | no cached line |
+| Read miss filled | 7 | 7 | clean |
+| CPU store | 9 | 7 | dirty |
+| Writeback | 9 or later evicted | 9 | lower copy updated |
 
-## The Same Idea Elsewhere
+A later load by this CPU sees its value 9 under the relevant memory rules. A hypothetical non-coherent device reading lower memory may still see 7 before writeback. That does not imply ordinary same-CPU loads randomly return old data. It identifies a particular observer outside the coherence arrangement.
 
-- **Hardware:** the cache controller manages lines, tracks state (valid, dirty, shared), and evicts old lines when new ones arrive.
-- **RISC-V:** the ISA does not define caches — they are implementation details. But the memory model (Chapter 23) defines what software can assume about visibility.
-- **OS:** the OS is cache-transparent — it does not know or care about caches. But it must flush caches when changing page tables (Chapter 20).
-- **Linux/driver:** drivers must use the DMA API (Chapter 22) to ensure cache coherency for device buffers. A driver that assumes caches are coherent will see stale data.
+Cleaning a dirty line writes its changes toward the required point of visibility. Invalidating removes a cached copy so a later access must obtain a new one. Discarding a dirty line without preserving required changes can lose data. Architecture-specific instructions and DMA APIs define exactly what maintenance is required and where it takes effect.
 
-## When It Fails
+## Why caches usually help
 
-A driver allocates a buffer, writes a DMA descriptor to it, and starts DMA. The descriptor is in the cache but not yet in DRAM. The DMA engine reads DRAM and sees the old descriptor. The transfer fails or corrupts memory. The fix: flush the cache (or use coherent memory) before starting DMA.
+Temporal locality means data used recently is likely to be used again. Spatial locality means nearby addresses are likely to be used together. A loop over consecutive four-byte elements can use sixteen elements from one 64-byte line before moving to the next. A scattered pointer chain may bring a line for only one useful field, reducing that benefit.
+
+Capacity and placement also matter. A working set larger than the cache displaces useful lines. Addresses competing for the same limited set can cause misses even when their combined size looks small enough. An access-count estimate is therefore not automatically a cache-miss estimate.
+
+Coherence between CPUs coordinates their copies of shared memory. It is distinct from an application's synchronization protocol: two coherent CPUs can still lose an increment as in Chapter 17. Coherence does not make several instructions one atomic transaction, and it does not promise every device is a coherent participant.
+
+## False sharing changes cost without changing the variable
+
+Suppose CPU A repeatedly updates a counter at `0x2000` and CPU B updates a separate counter at `0x2008`. Both lie in the same line. Even if the variables are logically independent and properly synchronized, obtaining writable ownership of that line can force coherence traffic between CPUs.
+
+Separating heavily written independent data into different lines can reduce this false sharing, at the cost of extra space and potentially worse locality elsewhere. It is a performance design based on measured access patterns, not a reason to pad every object automatically.
+
+The next chapter adds address translation. A cache line contains data; a page table describes an address mapping. Chapter 21's TLB caches translations rather than payload bytes. Keeping those roles separate is necessary before reasoning about stale DMA data in Chapters 22–23.
 
 ## Check
 
-1. A CPU reads address 0x2000. The cache line size is 64 bytes. Which addresses are fetched into the cache?
-   - A) Only 0x2000
-   - B) 0x2000 to 0x203F (the entire 64-byte line)
-   - C) 0x2000 to 0x2007 (8 bytes)
-   - D) All of memory
-   - Answer: B
-   - Explanation: Caches transfer entire lines. The line containing 0x2000 is 64 bytes: 0x2000 to 0x203F.
-   > Hint: What is the unit of cache transfer? How big is it?
+1. With 64-byte lines, which range contains address `0x203F`?
+   - A) `0x2000`–`0x203F`
+   - B) `0x203F`–`0x207E`
+   - C) `0x2040`–`0x207F`
+   - Answer: A
+   - Explanation: The line base clears the low six address bits.
 
-2. Which of these are types of cache misses? Pick all that apply.
-   - A) Compulsory miss (first access)
-   - B) Capacity miss (cache is full)
-   - C) Conflict miss (multiple addresses map to the same cache set)
-   - D) Coherence miss (another core modified the data)
-   - Answer: A, B, C, D
-   - Explanation: All four are real cache miss types. Compulsory is unavoidable. Capacity and conflict are about cache size and organization. Coherence is about multiple caches.
-   > Hint: Can you think of a reason a line would be evicted even if the cache is not full?
+2. Which statements follow from the write-back example? Select all that apply.
+   - A) A dirty cache line can be newer than lower memory.
+   - B) CPU coherence automatically makes a multi-instruction increment atomic.
+   - C) A non-coherent observer needs an explicit visibility protocol.
+   - Answer: A, C
+   - Explanation: Data-copy coordination and operation-level synchronization solve different problems.
 
-3. A cache line is "dirty." What does this mean?
-   - A) The data is corrupted
-   - B) The data has been modified in the cache but not written back to DRAM
-   - C) The data is shared between multiple caches
-   - D) The data is invalid
-   - Answer: B
-   - Explanation: A dirty line has been written by the CPU but the write has not reached DRAM. The cache must write it back before evicting it.
-   > Hint: What happens when the CPU writes to a cached address? When does DRAM see the write?
+3. A sequential loop reads 40 four-byte elements beginning at aligned address `0x2000`, with an initially empty cache and no eviction. Count the distinct lines touched. Repeat for a starting address of `0x203C`.
 
-4. Explain why a cache improves performance — what two types of locality does it exploit, and how does each one help?
+4. A CPU stores 9, a non-coherent device later writes 12 to lower memory, and a delayed dirty CPU writeback restores 9. Draw the timeline and explain why merely invalidating after the device finishes is too late to repair every such ownership violation.
 
-5. A driver writes a DMA descriptor to a buffer and starts DMA. The DMA engine reads the old descriptor. What cache-related operation is missing, and what are the two ways to fix it?
+5. Research challenge: inspect the DMA documentation for your chosen platform or kernel. Determine whether devices are coherent and which API performs required synchronization. Explain why the existence of a CPU cache alone does not identify the correct maintenance instruction.
 
 ## Limits
 
-This chapter shows a simple cache. Real caches have multiple levels, set-associative organization, prefetching, and write-back vs write-through policies. The principle — a copy of data that can be stale — is the source of all cache coherency problems (Chapter 23).
+The table uses one simple write-back cache and a deliberately non-coherent observer. Actual cache levels, policies, line sizes, and coherence domains vary. Use the OS's documented DMA interfaces rather than implementing guessed cache operations in a portable driver.
 
 ## Go Deeper
 
-- [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
+- [Linux DMA mapping guide](https://docs.kernel.org/core-api/dma-api-howto.html) — connect cache visibility to device access.
+- [Linux false sharing guidance](https://docs.kernel.org/kernel-hacking/false-sharing.html) — inspect line-level interference and measurement techniques.
 
 ## Related
 
-Chapter 18, Chapter 20
+- [Chapter 18 — Concurrency and Synchronization](18_concurrency_and_synchronization.md)
+- [Chapter 20 — Virtual Memory and Sv39](20_virtual_memory_and_sv39.md)

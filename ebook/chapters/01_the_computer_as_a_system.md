@@ -1,92 +1,87 @@
 # Chapter 01 — The Computer as a System
 
-> **Part I — A Computer That Can Run Code**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part I — A Computer That Can Run Code**
 
-## Why This Matters
+## The question this book follows
 
-A single line like `write(fd, "A", 1)` can print `A` on a screen, save it to a file, or push it out of a serial pin. The line looks the same every time. What happens underneath is completely different each time, and most real bugs live in the gap between "the call looked right" and "the bytes went somewhere unexpected."
+You can already write a program with variables, functions, loops, and pointers. Yet a successful function call does not explain what happened outside the program. If `write(fd, "A", 1)` returns 1, did a receiver see the letter? If two programs write at once, who owns the output? These questions require following a request through a computer, including the places where it waits.
 
-## Core Idea
+This book assumes basic programming, including reading small C examples. It develops the machine and operating-system knowledge needed to answer such questions; it does not assume that you have written assembly or a Linux driver. The recurring task is to name the state, identify who may change it, and distinguish a request from its completion.
 
-A computer is not one CPU. It is a CPU, memory, devices, and software connected so that a request travels down through layers: program → operating system → driver → register → wire. Every layer holds some state, and every step changes some state.
+Our running machine is a teaching RV64 RISC-V system. Its examples use little-endian byte order. When we introduce a UART, its deliberately small register map is fictional, not a claim about a particular development board. Linux examples later use real kernel interfaces, with omitted production details stated explicitly. Keep the numerical machine model separate from an actual board's datasheet.
 
-Two words used in this book: a **system call** is the doorway a program knocks on to ask the OS for something (like writing). A **register** is a tiny named storage slot inside the CPU or a device that holds one value the hardware acts on.
+## Start with a byte and an observation
 
-## Worked Example
+A UART is a device that sends and receives bits sequentially on serial signal lines. Imagine a process, a running instance of a program, whose file descriptor `fd` refers to a serial connection. A file descriptor is a small integer used to look up an open resource in that process. It is not the address of the UART.
 
-Print `A` (value 65) to a serial port:
+`"A"` supplies one character. In the ASCII encoding its byte value is 65, written `0x41` in hexadecimal. The final argument 1 requests one byte. A system call transfers the request to the operating-system kernel, the privileged software that manages shared resources. A device driver is kernel code that knows how to operate a particular kind of hardware.
+
+For now, use a simplified buffered transmit path:
 
 ```text
-program: write(fd, "A", 1)
-  → OS: find which device fd means
-  → driver: put 65 into the UART DATA register
-  → pin: TX line sends 65 bit by bit
+application buffer       kernel transmit queue       UART       receiver
+       41         copy          [41]           feed    41   bits   'A'
 ```
 
-Track the value 65 across the trip: it starts in the program's memory, gets copied into a CPU register, gets stored into the device's DATA register, then leaves as electrical pulses. Same number, four different homes.
+These boxes contain different copies or representations of the same information. Copying a byte out of the application does not erase its buffer. Nor does putting the byte in a queue immediately place it on a wire.
 
-## The Same Idea Elsewhere
+| Moment | Application buffer | Kernel queue | UART / line |
+| --- | --- | --- | --- |
+| Before request | `41` | empty | idle |
+| Kernel accepts one byte | `41` | `41` | may still be busy |
+| Driver feeds transmitter | `41` | empty | byte in transmitter |
+| Transmission finishes | `41` | empty | bits have left the pin |
 
-- **Hardware:** the CPU, memory, and the UART device are wired to one bus; the device keeps its own registers regardless of what the CPU is doing.
-- **RISC-V:** the instruction set defines which instructions and registers software may use; it does not describe the UART — that lives in the platform, outside the ISA chapters (05–08).
-- **OS:** the OS owns the mapping from `fd` to device, so two programs can share one UART without tripping over each other.
-- **Linux/driver:** a UART driver turns `write()` into register operations; the same `write()` on a regular file turns into completely different operations.
+In this model, `write` may return 1 at the second row. The application learns that one byte was accepted. It does not learn that the final row occurred, that a cable exists, or that a receiving program consumed the byte. The precise guarantee depends on the object and interface, which is why we must name them.
 
-## When It Fails
+## Why the layers exist
 
-A program writes `A` and gets no error, but nothing appears on the serial terminal. The natural suspect is "the write failed" — but the write succeeded. What failed is everything after it: the driver stored 65 into the wrong register, or the cable was never connected, or another program reconfigured the port. "No error" only means the top layer accepted the request.
+Why not let every program write directly to the device? A UART has shared configuration, finite buffering, and physical pins. Two programs independently reconfiguring its speed would interfere even if they had separate memory. The kernel offers an interface through which software can share and control access to that resource.
+
+The same `write` interface can also target a regular file. The first part of the request looks similar, but the later path uses filesystem and storage code instead of a serial transmitter. The interface lets applications request an operation without knowing every hardware detail. Its convenience makes the exact meaning of success especially important.
+
+RISC-V specifies instructions the CPU can execute. It does not specify this UART's address or Linux's file descriptor table. We will separate three contracts: the ISA describes instruction behavior; the platform describes devices and their connections; the OS describes services available to programs. A bug can respect one contract while violating another.
+
+## Diagnose a missing character
+
+Suppose `write` returns 1 but nothing appears. Repeating the call only proves that another request can be accepted. First identify the last confirmed boundary: did the byte enter the software queue, reach the transmitter, leave the pin, or reach the receiving process? Evidence from one boundary narrows the search; it does not certify the remaining boundaries.
+
+A queue containing `41` while the transmitter is idle suggests that feeding the device has stalled. An empty queue plus observed signal transitions moves the investigation toward serial settings, wiring, or the receiver. These are hypotheses, not conclusions from a return value alone.
+
+The next chapters make the boxes in this diagram precise. First we need to represent the byte and its address, then understand how instructions move it. Later we will explain how a busy device makes software wait and how completion makes that software runnable again.
 
 ## Check
 
-1. A program runs `write(fd, "A", 1)` where `fd` is a serial port, and `A` appears on the terminal. Which path did the byte take?
-   - A) Program → CPU register → TX pin, the OS is not involved
-   - B) Program → system call → driver → UART DATA register → TX pin
-   - C) Program → file on disk → UART reads the file → TX pin
-   - D) Program → CPU cache → RAM → TX pin
+1. In the buffered model above, `write` returns 1 before the transmitter becomes ready. Which statement is justified?
+   - A) The receiver consumed `A`.
+   - B) The kernel accepted one byte for this write.
+   - C) The UART line is idle.
    - Answer: B
-   - Explanation: A user program cannot touch the pin directly; the system call hands the byte to the driver, and the driver stores it in the device register that feeds the transmitter.
-   > Hint: Ask who is allowed to touch hardware. The program, or the OS on its behalf?
+   - Explanation: Acceptance is the observed boundary. Neither physical transmission nor receiver consumption follows from it.
 
-2. Which of these change during the trip of `A` above? Pick all that apply.
-   - A) The program's memory holding `"A"`
-   - B) A CPU register carrying 65
-   - C) The UART DATA register
-   - D) The voltage on the TX pin
-   - Answer: B, C, D
-   - Explanation: The program's buffer is only read, never rewritten. The value moves through a CPU register, into the device register, and out as pin voltage — those three change.
-   > Hint: Reading a value does not change it. Follow 65 and mark each home it leaves.
+2. Two processes use different file descriptors for the same UART. Which state can still be shared? Select all that apply.
+   - A) Physical serial speed configuration
+   - B) Transmit hardware
+   - C) The numerical meaning of each process's descriptor table entry must be identical
+   - Answer: A, B
+   - Explanation: Separate handles can lead to one physical resource. Descriptor numbers are interpreted within each process.
 
-3. The same `read()` call works on a regular file and on a UART, but one evening the UART `read()` never returns while the file `read()` always does. What is the most useful first question?
-   - A) Is the baud rate correct?
-   - B) Is there any byte available to read right now?
-   - C) Is the file descriptor a small number?
-   - D) Is the CPU fast enough?
-   - Answer: B
-   - Explanation: A file `read()` returns whatever is stored, even zero bytes at end of file. A UART `read()` waits for the outside world — no arriving byte means nothing to return. Availability, not speed or settings, is the first split.
-   > Hint: A file holds the past. A UART waits for the future.
+3. Construct two different failures that produce a successful write and a silent receiver. For each, identify an observation that distinguishes it from the other. State what that observation cannot prove.
+   > Hint: Place one failure before the UART and the other after its output pin.
 
-4. Two programs open the same serial port. One changes the port speed and the other one's output turns to garbage. Why didn't each program get its own private port?
-   - A) Because both file descriptors point at one shared device with one speed register
-   - B) Because the CPU cache was not flushed
-   - C) Because the programs share the same CPU registers
-   - D) Because the baud rate is stored per process
-   - Answer: A
-   - Explanation: `open()` gives each program its own handle, but both handles lead to the same device and its single speed register. Handles are private; hardware is shared.
-   > Hint: What exactly does each program own after `open()` — the device, or a path to it?
+4. A program sends the two-byte command `GO` through two writes. Another program sends `STOP` concurrently. What additional interface guarantees would you need before claiming the receiver sees complete commands? Separate byte acceptance, ordering, and message boundaries.
 
-5. Sketch the full path of one button press waking up a sleeping program, in at least 6 steps from finger to running code. Mark every place where some state changes owner (hardware → driver → OS → program).
+5. Research challenge: consult the operating system's `write` documentation. Find a case where a positive result is smaller than the requested count. Design the application's bookkeeping so retrying does not duplicate the accepted prefix.
 
 ## Limits
 
-This chapter's model hides interrupts, buffering, baud-rate setup, and flow control — a real UART transfer needs all of them (Chapters 11–12). It also pretends one `write()` equals one transmission; buffering and scheduling can delay or merge bytes.
+The transmit queue is a teaching model, not a complete Linux TTY trace. Actual serial paths may include additional queues, line processing, flow control, and DMA. We assume a working process and open descriptor here; boot, access permissions, and driver initialization are developed later. No episode or simulator is required to follow the book.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux TTY driver documentation](https://docs.kernel.org/driver-api/tty/tty_driver.html) — identify the driver boundary beneath the application interface.
+- [Linux VFS](https://docs.kernel.org/filesystems/vfs.html) — see how one file interface dispatches to different implementations.
 
 ## Related
 
-Chapter 02, Chapter 03
+- [Chapter 02 — Bits, Bytes, Numbers, and Addresses](02_bits_bytes_numbers_and_addresses.md)

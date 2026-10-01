@@ -1,81 +1,85 @@
 # Chapter 04 — Inside the CPU
 
-> **Part I — A Computer That Can Run Code**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part I — A Computer That Can Run Code**
 
-## Why This Matters
+## What does executing an instruction change?
 
-Everything a computer does is some register changing, then the next instruction running. If you can say "which register holds what, and where does the PC go next," you can follow any program — including into interrupt handlers, context switches, and crashes (Chapters 12–13).
+Memory now has concrete byte addresses. A CPU adds a small working set of registers and a rule for selecting the next instruction. The central question is: given an initial state and one instruction, what state is visible after it completes?
 
-## Core Idea
+For the integer examples here, track 32 general-purpose registers named `x0` through `x31`, a program counter called PC, and the memory locations the code accesses. Each register holds 64 bits on RV64. The PC is the address used to select the current instruction. It is separate from the general-purpose registers.
 
-The CPU's visible state is small: 32 general registers (`x0`–`x31`) plus the program counter (`PC`), which holds the address of the current instruction. Each instruction reads some state, writes some state, and normally moves the PC to the next instruction. Two special rules: `x0` always reads as zero no matter what you write, and the PC goes somewhere else only when an instruction (branch, jump) or an event (trap) says so.
+These are the parts of architectural state needed for our first programs. Architectural means software can rely on their defined behavior. Privileged control registers, floating-point state, and other extensions add more state later. A pipeline or branch predictor can affect performance without appearing as another variable in this simple trace.
 
-## Worked Example
+## Fetch, decode, execute, commit
 
-Start state: `x5 = 10`, `x6 = 20`, `PC = 0x8000`.
+Fetching obtains instruction bits from instruction memory at the PC. Decoding interprets those bits as an operation and operand names. Execution computes a result. Completion makes the specified result part of architectural state and selects the next PC. This is a conceptual order, not a promise that a real CPU uses four clock cycles or executes only one instruction at a time.
+
+Use two four-byte integer instructions beginning at `0x8000`. Their assembly notation names the destination first, followed by two source registers. `add x7, x5, x6` means add the values in `x5` and `x6` and place the result in `x7`.
 
 ```text
-add x7, x5, x6     → x7 = 30, PC = 0x8004
-add x0, x5, x6     → x0 = 0 (still!), PC = 0x8008
+initial: PC=8000, x5=10, x6=20, x7=99, x0=0
+8000: add x7, x5, x6
+8004: add x5, x7, x6
 ```
 
-Track it: the first instruction reads two registers and writes a third. The second computes 30 and throws it away — `x0` discards every write. The PC marches by 4 each time because these instructions are 4 bytes long and neither one jumps.
+| Completed instruction | `x5` | `x6` | `x7` | Next PC |
+| --- | --- | --- | --- | --- |
+| none | 10 | 20 | 99 | `0x8000` |
+| first add | 10 | 20 | 30 | `0x8004` |
+| second add | 50 | 20 | 30 | `0x8008` |
 
-## The Same Idea Elsewhere
+The second instruction sees the first instruction's result. Memory at `0x1000` has not changed because neither instruction requests a memory write. Register names in the assembly are selectors, not numbers to be added: `x5` contributes 10 in the first row, not 5.
 
-- **Hardware:** a register file, an ALU, and fetch logic implement exactly this state machine in silicon.
-- **RISC-V:** `x0`–`x31`, the PC, and fetch-decode-execute are the whole contract software relies on; everything else is implementation detail.
-- **OS:** a context switch is just saving this state (registers + PC) for one task and loading another's — the trick behind processes (Chapter 16).
-- **Linux/driver:** trap entry code is where an event (interrupt, fault, system call in Chapter 13) freezes this state so C code can inspect it.
+## Why registers and memory are different
 
-## When It Fails
+Arithmetic operands are held close to the CPU's execution units. A load brings a value from memory into a register; a store copies a register value into memory. Thus a source expression such as `total = total + 1` may require a load, arithmetic, and a store if `total` resides in memory. A compiler may instead retain a value in a register across several operations when the language permits it.
 
-A loop counter in `x7` mysteriously resets to 30 every iteration. The loop body calls a helper that also uses `x7` as a scratch register and never restores it. Both sides are "correct" alone — the bug is two owners sharing one register with no agreement. Calling conventions (Chapter 08) exist precisely to settle who saves what.
+Do not assume every source statement corresponds to one instruction or every source variable has one permanent register. To explain an instruction trace, use the compiled instructions and their current operands. To explain a C program, also account for the compiler and language rules.
+
+RISC-V gives `x0` special behavior: reading it yields zero and writing it discards the result. Executing `add x0, x5, x6` therefore leaves `x0` at zero. That does not cancel the instruction or hold the PC still. A permanent zero operand lets other instructions express useful operations without adding a separate instruction for every special case.
+
+## The next instruction is part of the result
+
+Our adds advance PC by four because they are four-byte instructions and do not branch. Instruction length is not always four in RISC-V: the compressed extension includes two-byte instructions. Branches and jumps select a different next PC, while traps transfer control to a handler under separate rules.
+
+For now, a sequential trace says which instruction completes first and what each completion changes. A sophisticated core may overlap work or speculate internally, but it must honor the architecture's required observable behavior. That distinction allows the same suitable binary to run on very different implementations.
+
+If a computed total is wrong, record inputs and the first unexpected state transition. In the trace above, a final `x5 = 40` cannot be explained by the written instructions and initial values. Either the initial state, instruction sequence, or observation is different. Saying "the CPU added incorrectly" skips those testable possibilities.
+
+Chapter 05 makes the instruction contract explicit; Chapters 06 and 07 extend this trace method to memory and control flow.
 
 ## Check
 
-1. With `x5 = 10`, `x6 = 20`, `PC = 0x8000`, the CPU runs `add x7, x5, x6`. Which statements are true? Pick all that apply.
-   - A) Afterwards `x7` holds 30
-   - B) Afterwards the PC holds `0x8004`
-   - C) Afterwards `x5` still holds 10
-   - D) Afterwards `x0` holds 30
-   - Answer: A, B, C
-   - Explanation: `add` reads its sources without changing them and writes only the destination (A, C). Normal instructions advance the PC by 4 (B). `x0` discards all writes and stays 0, so D is false.
-   > Hint: Ask of each register: was it written by this instruction?
+1. After the two instructions above, which values are correct? Select all that apply.
+   - A) `x5 = 50`
+   - B) `x7 = 30`
+   - C) The original memory buffer must have changed.
+   - Answer: A, B
+   - Explanation: The second add consumes the updated x7. Neither instruction stores to memory.
 
-2. A branch is taken to address `0x9000` while the PC is `0x8000`. What does the PC hold next?
-   - A) `0x9000`
-   - B) `0x8004`
-   - C) `0x9004`
-   - D) `0x0000`
-   - Answer: A
-   - Explanation: A taken branch *replaces* the PC with its target. "PC + 4" is only the default for instructions that fall through.
-   > Hint: PC+4 is the default, not the law. What is a branch for?
-
-3. `add x0, x5, x6` computes 30 and `x0` still reads 0. Why does RISC-V waste an entire register on permanent zero — what does it buy the instruction set?
-   - A) Nothing; it is reserved for future CPUs
-   - B) It gives common operations (move, clear, compare-against-zero) for free without extra instructions
-   - C) It makes the register file 32 entries instead of 31
-   - D) It holds the return address of function calls
+2. A four-byte `add x0, x5, x6` starts at `0x8008`. Which state follows normal completion?
+   - A) `x0 = x5 + x6`, PC unchanged
+   - B) `x0 = 0`, PC = `0x800C`
+   - C) `x0 = 0`, PC = `0x8008`
    - Answer: B
-   - Explanation: With a zero register, `add x5, x6, x0` is a move and `add x0, x0, x0` is a no-op — no dedicated opcodes needed. D describes `ra` (`x1`, Chapter 08).
-   > Hint: Try to build "copy x6 into x5" using only `add`.
+   - Explanation: Discarding the destination result does not suppress sequential control flow.
 
-4. An OS must save some registers at every context switch but may skip others. Look up caller-saved vs callee-saved registers and explain who is responsible for each set — and what breaks if both sides assume the other saved `x7`.
+3. Reverse the order of the two original adds while keeping their operands and initial state. Trace every register update. Explain precisely which dependency makes the final result differ.
 
-5. The CPU has no idea what a PID is, yet processes stay isolated from each other. Using privilege levels and the MMU, explain where the isolation actually lives — which state the CPU *does* hold that makes separation possible.
+4. A debugger shows `x7 = 30` twice, separated by a function call. Is that sufficient evidence that x7 was preserved throughout the call? Give two instruction histories consistent with those observations.
+
+5. Research challenge: find an instruction that has an observable effect even with destination x0. Explain why discarding a register result does not generally discard memory effects or exceptions. State which ISA instruction and rule you used.
 
 ## Limits
 
-This chapter shows the simple model: every instruction is 4 bytes and the PC always advances by 4 unless told otherwise. Real RISC-V has 2-byte compressed instructions, and traps can redirect the PC to handler addresses. Pipelining and out-of-order execution are hidden underneath — software observes the ISA contract, not the machinery.
+This is an architectural trace, not a pipeline simulator. It omits timing, caches, interrupts, and extension state. All shown instructions complete normally. Instruction fetch and data access can themselves fail; Chapter 13 explains how such failures change control flow.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [RISC-V psABI](https://github.com/riscv-non-isa/riscv-elf-psabi-doc)
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
+- [RISC-V base integer ISA](https://docs.riscv.org/reference/isa/unpriv/rv32.html) — read the register-state definition and the rule for loads targeting x0.
+- [RV64 integer ISA](https://docs.riscv.org/reference/isa/unpriv/rv64.html) — distinguish register width from operation width.
 
 ## Related
 
-Chapter 03, Chapter 05
+- [Chapter 03 — Memory: Where State Lives](03_memory_where_state_lives.md)
+- [Chapter 05 — Instructions and the RISC-V ISA](05_instructions_and_the_risc_v_isa.md)

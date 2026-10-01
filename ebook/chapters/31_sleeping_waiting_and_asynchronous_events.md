@@ -1,86 +1,105 @@
 # Chapter 31 — Sleeping, Waiting, and Asynchronous Events
 
-> **Part VII — Linux Device Drivers**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VII — Linux Device Drivers**
 
-## Why This Matters
+## How can a reader wait without missing data?
 
-A driver often needs to wait for something: a device to be ready, a transfer to complete, a buffer to be available. **Sleeping** lets the driver wait without burning CPU. **Asynchronous events** let the device notify the driver when something happens. Getting the wait wrong causes deadlocks, lost wakeups, and system hangs.
+Chapter 30 put received bytes into a software queue and issued a wakeup. A reader needs a protocol that works whether data arrives before it starts waiting, while it prepares to sleep, or after it has slept. The persistent condition is "the queue contains data," not "an interrupt just happened."
 
-## Core Idea
+A wait queue coordinates tasks waiting for a condition. A wakeup prompts eligible waiters to recheck; it does not grant one exclusive ownership of the data and does not store an unlimited history of events. The condition and its synchronized state are the source of truth.
 
-A driver waits with `wait_event_interruptible` (sleeps until a condition is true) or `completion` (sleeps until another thread signals). The device signals completion with an interrupt. The driver's interrupt handler wakes the waiting thread. The key rule: the condition must be checked before sleeping, and the wakeup must happen after the condition is set.
+## See the lost-wakeup race first
 
-## Worked Example
+A naive reader checks empty and then sleeps as two unrelated actions:
 
-```c
-DECLARE_WAIT_QUEUE_HEAD(wq);
-int data_ready = 0;
-
-// Thread A: wait for data
-wait_event_interruptible(wq, data_ready);
-// process data...
-
-// Interrupt handler: wake the thread
-data_ready = 1;
-wake_up_interruptible(&wq);
+```text
+reader: queue is empty
+producer: enqueue 41; wake readers (none are sleeping yet)
+reader: goes to sleep
 ```
 
-Thread A sleeps until `data_ready` is set. The interrupt handler sets it and wakes the thread. The order matters: set the condition, then wake.
+The byte exists but the reader may sleep until another event occurs. Adding a delay before sleeping does not fix the race; it changes the window. The wait protocol must coordinate preparing to sleep with rechecking the condition.
 
-## The Same Idea Elsewhere
+Linux wait_event-style helpers perform the wait/recheck protocol, but the driver still has to publish the condition correctly and use suitable synchronization for the associated data. Waking before making data visible can re-create a failure at a different boundary.
 
-- **Hardware:** the device raises an interrupt when data is ready. The interrupt handler runs.
-- **RISC-V:** the CPU takes the interrupt and jumps to the handler (Chapter 12).
-- **OS:** the kernel provides wait queues, completions, and the scheduler that sleeps and wakes threads.
-- **Linux/driver:** the driver uses these primitives to wait for device events.
+## Trace the producer and consumer contracts
 
-## When It Fails
+Assume a bounded queue protected by an IRQ-safe spinlock, possibly several readers, and a persistent gone flag for removal. A helper data_or_gone takes that lock briefly, tests queue state or gone, and releases it without sleeping. The following is pseudocode showing the locking boundaries:
 
-A driver checks a condition, finds it false, and sleeps. But the interrupt fires between the check and the sleep. The wakeup is lost. The driver sleeps forever. The fix: use a wait queue that handles this race — the kernel rechecks the condition after the thread is queued but before it sleeps.
+```text
+producer in IRQ context:
+    lock queue
+    append byte, or record overflow according to the chosen policy
+    unlock queue
+    wake readers
+
+consumer in sleepable context:
+    repeat:
+        wait_event_interruptible(readers, data_or_gone())
+        if interrupted by signal: return the reported error
+        lock queue
+        if queue has data:
+            remove one byte into private local storage
+            unlock queue
+            process/deliver the byte outside the lock
+            finish this operation
+        if gone:
+            unlock queue
+            return device-removed outcome
+        unlock queue
+        repeat
+```
+
+Why the second queue test? Another reader may consume the byte between wakeup and acquisition. A wakeup says recheck, not "this byte is yours." Dequeuing under the same lock establishes which reader owns the item. The example chooses to drain already queued data before reporting removal; an actual interface must document its chosen policy.
+
+Operations that may sleep, such as a userspace copy, happen after releasing the spinlock. A full read implementation must also handle partial copies, return counts, and the chosen policy for data already removed from the queue. Chapter 33 addresses that interface rather than concealing it inside this synchronization sketch.
+
+## A completion represents a different condition
+
+For a one-shot request, a completion object can represent "this operation has finished." Initialize it before submission, have the producer complete it after publishing the result, and wait using the appropriate timeout/interruption policy. Completion state can account for completion occurring before the waiter starts, unlike an unrecorded transient notification.
+
+Reinitializing while a prior operation or waiter is still active can erase or misattribute progress. A timeout also does not prove the producer stopped: a DMA engine or worker may still complete later. The associated object must remain alive until the outstanding work is canceled or confirmed finished.
+
+For repeated incoming bytes, queue content is usually the more informative persistent condition. For one operation's terminal result, a completion can be clearer. Choose by the state being represented, not by treating all notification primitives as interchangeable.
+
+## Removal must wake the path out
+
+If a reader waits only for data and the device disappears permanently, it can wait forever. Removal should publish the terminal condition under the same state protocol and wake blocked readers, while ensuring the wait structure and instance remain alive until those users are finished.
+
+This closes the chain from hardware event to a runnable task. Chapter 32 applies the same completion and lifetime reasoning to DMA buffers.
 
 ## Check
 
-1. A driver calls `wait_event_interruptible(wq, condition)`. What happens if the condition is already true?
-   - A) The thread sleeps anyway
-   - B) The thread does not sleep and continues immediately
-   - C) The thread sleeps for a fixed time
-   - D) The thread crashes
+1. A reader wakes but another reader consumed the only byte. What must happen?
+   - A) Read nonexistent queue data because wakeup grants ownership.
+   - B) Recheck under synchronization and wait again if appropriate.
+   - C) Treat every such occurrence as a hardware failure.
    - Answer: B
-   - Explanation: `wait_event_interruptible` checks the condition first. If it is true, the thread does not sleep.
-   > Hint: What does the function check before sleeping?
+   - Explanation: Eligibility to run does not reserve a queue item.
 
-2. Which of these are true about sleeping in a driver? Pick all that apply.
-   - A) Sleeping allows the CPU to run other threads
-   - B) Sleeping is legal in interrupt context
-   - C) Sleeping is legal in process context
-   - D) Sleeping wastes CPU cycles
-   - Answer: A, C
-   - Explanation: Sleeping lets the CPU run other threads (A) and is legal in process context (C). It is illegal in interrupt context (B is false). Sleeping does not waste CPU (D is false).
-   > Hint: What context can sleep? What happens to the CPU when a thread sleeps?
+2. Which belong in a robust blocking protocol? Select all that apply.
+   - A) A persistent condition
+   - B) Synchronized publication of associated data
+   - C) A terminal path for device removal or operation cancellation
+   - Answer: A, B, C
+   - Explanation: Notification alone does not preserve data, establish visibility, or provide an exit after removal.
 
-3. A driver waits for a condition but the wakeup is lost. What is the most likely cause?
-   - A) The condition was set before the thread started waiting
-   - B) The interrupt handler did not call wakeup
-   - C) The thread checked the condition, found it false, and slept — but the wakeup happened between the check and the sleep
-   - D) The kernel does not support wait queues
-   - Answer: C
-   - Explanation: The race between checking the condition and sleeping can lose a wakeup. The fix is to use a wait queue that handles this race.
-   > Hint: What is the window between checking and sleeping? What can happen in that window?
+3. Draw arrival timelines before, during, and after the wait helper's preparation. Explain which condition checks prevent sleeping indefinitely with queued data.
 
-4. Explain the difference between a wait queue and a completion — when would you use each?
+4. A DMA completion wait times out and the driver frees the completion-containing object. The IRQ arrives afterward. Explain the lifetime failure and design a cancellation/quiescence sequence before releasing the object.
 
-5. A driver waits for a DMA transfer to complete. The transfer never completes. List three possible causes and the one register read that would distinguish them.
+5. Research challenge: compare wait_event_interruptible, completion waits, and their timed variants in kernel documentation. Record their different return conventions and explain how confusing zero, positive, and negative results can turn a timeout into false success.
 
 ## Limits
 
-This chapter shows basic waiting. Real drivers use timeouts, poll, and select for multiple event sources. The principle — check condition, sleep, wake on event — is the same.
+The sketch defines synchronization and removal policy, not a complete character-device read implementation. Queue capacity, overflow, multiple readers, partial user copies, and object references must be specified by the real subsystem. Wait helpers do not independently protect arbitrary shared payload data.
 
 ## Go Deeper
 
-- [Linux Driver API (waiting)](https://docs.kernel.org/driver-api/basics.html)
-- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
+- [Linux wait queues and driver basics](https://docs.kernel.org/driver-api/basics.html) — inspect condition rechecking and interruptible waits.
+- [Linux completions](https://docs.kernel.org/scheduler/completion.html) — inspect initialization, lifetime, and wait return values.
 
 ## Related
 
-Chapter 30, Chapter 32
+- [Chapter 30 — Interrupts in a Real Linux Driver](30_interrupts_in_a_real_linux_driver.md)
+- [Chapter 32 — DMA in a Real Linux Driver](32_dma_in_a_real_linux_driver.md)

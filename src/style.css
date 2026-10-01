@@ -209,9 +209,29 @@ body {
   border: 1px solid var(--line);
   padding: 24px;
   max-width: 68ch;
+  min-width: 0;
+  width: 100%;
 }
 
 .ebook-page h1 { margin: 4px 0 16px; }
+.ebook-part { font-size: 0.8rem; margin: 20px 0 8px; line-height: 1.5; }
+.ebook-outline { border-block: 1px solid var(--line); padding: 12px 0; margin: 20px 0 28px; }
+.ebook-outline ul { margin: 0; padding-left: 20px; }
+.ebook-outline li { margin: 6px 0; }
+.ebook-outline .text-button { text-align: left; }
+.ebook-body { line-height: 1.75; overflow-wrap: anywhere; }
+.ebook-body h2 { margin-top: 2em; line-height: 1.3; scroll-margin-top: 24px; }
+.ebook-body h3 { line-height: 1.4; scroll-margin-top: 24px; }
+.ebook-body pre { overflow-wrap: normal; line-height: 1.55; }
+.ebook-body table { display: block; overflow-x: auto; }
+.ebook-after-check { border-top: 1px solid var(--line); margin-top: 24px; }
+.ebook-chapter-nav { display: flex; justify-content: space-between; gap: 24px; border-top: 1px solid var(--line); margin-top: 32px; padding-top: 20px; }
+.ebook-chapter-nav .text-button { max-width: 48%; text-align: left; }
+.ebook-chapter-nav .text-button:last-child { margin-left: auto; text-align: right; }
+@media (max-width: 759px) {
+  .ebook-side { max-height: 40vh; overflow-y: auto; }
+  .ebook-page { padding: 16px; }
+}
 
 .check-progress { font-size: 0.85rem; color: var(--muted); }
 

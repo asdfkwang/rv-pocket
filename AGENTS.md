@@ -11,6 +11,8 @@
 - Prefer reusable chapter data over duplicated chapter-specific UI.
 - Keep chapter state and view state separate.
 - Rust/WASM may be added later only when needed.
+- Do not translate content unless the user explicitly asks for translation. No unrequested localization, i18n work, or translation passes.
+- Never delegate translation or rewriting prose to subagents; do that work directly when the user asks for it.
 
 ## Local build & verify (Bun)
 

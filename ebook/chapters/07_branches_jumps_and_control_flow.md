@@ -1,81 +1,83 @@
 # Chapter 07 — Branches, Jumps, and Control Flow
 
-> **Part II — Speaking RISC-V**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part II — Speaking RISC-V**
 
-## Why This Matters
+## How does a loop become repeated instructions?
 
-Without branches, a program is a straight line. Loops, if-statements, and function calls are all the CPU deciding "where does the PC go next?" When a loop runs forever or a function never returns, the bug is in this decision.
+Chapter 06 explained the effects of one memory operation. A program also needs to decide which operation happens next. A conditional branch compares registers and selects either its target or the sequential instruction. A jump selects a target unconditionally; a linking jump also records where a caller can resume.
 
-## Core Idea
+Use the PC as another trace column. Labels such as `loop` name instruction addresses for the assembler. The processor receives an encoded displacement or register-based address, not the label's text.
 
-Normally the PC advances by 4 (one instruction). A **branch** compares two registers and, if the condition holds, replaces the PC with a target address. A **jump** (`jal`) unconditionally changes the PC and saves the return address in a register. A loop is just a branch that goes backward.
+## Sum three elements, one iteration at a time
 
-## Worked Example
+Assume three 32-bit integers 3, 4, and 5 at `0x1000`, `0x1004`, and `0x1008`. All instructions shown are four bytes. Registers begin with x10 = `0x1000`, x11 = 3, and x12 = 0.
 
 ```text
-0x8000: addi x5, x0, 3      # x5 = 3 (counter)
-0x8004: addi x6, x6, 10     # x6 += 10 (loop body)
-0x8008: addi x5, x5, -1     # x5 -= 1
-0x800c: bne  x5, x0, 0x8004 # if x5 != 0, go back to 0x8004
-0x8010: ...                 # loop done
+8000: beq  x11, x0, done
+8004: lw   x13, 0(x10)       # loop
+8008: add  x12, x12, x13
+800C: addi x10, x10, 4
+8010: addi x11, x11, -1
+8014: bne  x11, x0, loop
+8018: ...                    # done
 ```
 
-Trace: x5 starts at 3. Each pass adds 10 to x6 and decrements x5. After 3 passes x5 is 0, the branch is not taken, and execution falls through to `0x8010`. The loop ran exactly 3 times.
+The initial beq skips the loop when the count is zero. At the bottom, bne returns to `0x8004` only if the remaining count is nonzero.
 
-## The Same Idea Elsewhere
+| After bottom branch | Loaded value | Sum x12 | Next address x10 | Count x11 | Next PC |
+| --- | --- | --- | --- | --- | --- |
+| first iteration | 3 | 3 | `0x1004` | 2 | `0x8004` |
+| second iteration | 4 | 7 | `0x1008` | 1 | `0x8004` |
+| third iteration | 5 | 12 | `0x100C` | 0 | `0x8018` |
 
-- **Hardware:** the branch unit compares registers and computes the target; the fetch path redirects.
-- **RISC-V:** `beq`, `bne`, `blt`, `bge` (and unsigned variants) are conditional branches; `jal` is a jump with a link register.
-- **OS:** the scheduler uses a timer interrupt (a forced PC change) to switch tasks — control flow the program never chose.
-- **Linux/driver:** `goto` in error-handling paths is the C version of a branch; understanding the assembly helps read stack traces.
+x10 ends one element beyond the array, but that address is never loaded. Computing an address and accessing it are distinct events. If the initial zero-count check were absent, a zero-length input would still execute the body once and decrement zero to an enormous unsigned count. The entry condition establishes whether the loop's first access is valid.
 
-## When It Fails
+## A branch chooses an interpretation too
 
-A loop condition uses `blt` (signed less-than) but the counter is unsigned. At some large value the signed comparison says "negative" and the loop exits early or never. The fix is `bltu`. The bug is not the logic — it is the type of comparison matching the type of the data.
+`beq` and `bne` compare bit patterns for equality. Ordered comparisons need a signedness choice: `blt` compares signed integers, whereas `bltu` compares unsigned integers. On RV64 the pattern of all ones is less than zero when interpreted as -1, but greater than zero when interpreted as the largest unsigned value.
+
+Choosing the wrong branch can therefore break a loop even when arithmetic and memory accesses individually work. Identify the invariant, a fact maintained across iterations. Here, after k completed iterations, the pointer is `base + 4*k`, the count is `3-k`, and the sum contains the first k values. The table is evidence that these facts hold for the example; the instruction effects explain why they continue to hold.
+
+## Calls need a route back
+
+`jal ra, target` writes the sequential return address into ra and transfers to target. ra is the ABI name of x1. A four-byte jal at `0x9000` therefore records `0x9004`. `jalr x0, 0(ra)` jumps through ra without retaining another link; the architecture clears the target's least significant bit. The usual `ret` pseudoinstruction expresses this return.
+
+A jump does not create a protected history of calls. A second call writing ra replaces the first return address. That is the problem Chapter 08 will solve with a stack.
+
+Control flow also determines cleanup. If an allocation fails, a jump to a cleanup label is correct only if that label releases resources actually acquired on the path taken. Drawing the executed path and listing live resources is the same method as tracing pointer and count in this loop.
 
 ## Check
 
-1. At `0x800c`, `bne x5, x0, 0x8004` is executed with `x5 = 0`. What is the next PC?
+1. At `0x8014`, x11 is zero. What is the next PC?
    - A) `0x8004`
-   - B) `0x8010`
-   - C) `0x800c`
-   - D) `0x0000`
+   - B) `0x8018`
+   - C) `0x8014`
    - Answer: B
-   - Explanation: `bne` branches only if the registers differ. `x5 = 0` equals `x0`, so the branch is not taken and the PC advances to the next instruction at `0x8010`.
-   > Hint: bne = branch if NOT equal. Is x5 equal to x0?
+   - Explanation: The bne condition is false, so this four-byte instruction falls through.
 
-2. Which of these are unconditional control-flow changes? Pick all that apply.
-   - A) `beq`
-   - B) `jal`
-   - C) `bne`
-   - D) `jalr`
-   - Answer: B, D
-   - Explanation: `jal` and `jalr` always change the PC. `beq` and `bne` are conditional — they only branch when their condition holds.
-   > Hint: "jal" has no condition field. What does the 'l' stand for?
+2. Which statements hold for the three-element trace? Select all that apply.
+   - A) The last loaded address is `0x1008`.
+   - B) x10 finishes at `0x100C`.
+   - C) Reaching x10 = `0x100C` means that location was read.
+   - Answer: A, B
+   - Explanation: The pointer advances after each load, including the last, but the final branch prevents another load.
 
-3. A function calls another function with `jal ra, target`. What does `ra` hold when the target starts executing?
-   - A) The address of the call instruction
-   - B) The address of the instruction after the call
-   - C) The address of the function's first instruction
-   - D) Zero
-   - Answer: B
-   - Explanation: `jal` saves PC+4 (the return address) in `ra` before jumping. The called function can return with `jalr x0, 0(ra)` to resume after the call.
-   > Hint: The caller needs to know where to resume. What address is that?
+3. Trace an initial count of zero with and without the entry beq. Identify the first invalid assumption in the version without the guard, rather than waiting for an eventual crash.
 
-4. Explain why a compiler might turn a `while` loop into a backward branch at the end rather than a forward branch at the beginning — what does this save on the common path?
+4. Choose register values for which blt and bltu select different paths. Explain both interpretations using a fixed width and derive the branch outcomes.
 
-5. A driver's probe function has 5 error-handling `goto` labels. Trace the control flow for the case where the 3rd allocation fails: which labels run, which are skipped, and what state has been allocated at that point?
+5. Research challenge: find the branch displacement range and alignment in the ISA. Explain what an assembler or compiler can do when a conditional target is beyond that range, and account for both the taken and untaken paths of your replacement sequence.
 
 ## Limits
 
-This chapter shows simple branches and jumps. Real CPUs predict branches (speculative execution), and RISC-V has compressed instructions that change instruction sizes. The ISA contract — what the PC does — is exact; the machinery that implements it is not.
+The example omits compressed encodings and assumes valid bounded input. Timing and branch prediction do not change the specified register/PC trace. Calling and cleanup conventions are software responsibilities, which the next chapter makes explicit.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Linux Kernel Coding Style (goto)](https://docs.kernel.org/process/coding-style.html)
+- [RISC-V control-transfer instructions](https://docs.riscv.org/reference/isa/unpriv/rv32.html) — verify branch, jal, and jalr semantics.
+- [RISC-V psABI](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/) — distinguish ISA register numbers from their calling-convention names.
 
 ## Related
 
-Chapter 06, Chapter 08
+- [Chapter 06 — Loads, Stores, and Pointers](06_loads_stores_and_pointers.md)
+- [Chapter 08 — Functions, ABI, and the Stack](08_functions_abi_and_the_stack.md)

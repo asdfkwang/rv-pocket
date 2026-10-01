@@ -1,92 +1,91 @@
 # Chapter 28 — Probe: Meeting the Device
 
-> **Part VII — Linux Device Drivers**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VII — Linux Device Drivers**
 
-## Why This Matters
+## What must probe establish before callbacks can run?
 
-Probe is where the driver and the device first meet. The kernel has found a matching device tree node; now the driver must claim the device, map its registers, and prepare it for use. A probe that succeeds but leaves the device half-initialized is worse than a probe that fails loudly.
+A match gives a driver an opportunity to initialize a particular device. Probe should either leave a fully usable instance or report failure while unwinding what it acquired. It is not simply a place to collect pointers: it establishes the invariants that every later callback relies on.
 
-## Core Idea
+Assume a device needs mapped registers, an enabled clock, initialized software state, an interrupt handler, and registration with an upper subsystem. Its hardware interrupt source must remain masked until the handler's required state is ready. Some dependencies may not yet exist when probe first runs.
 
-Probe does three things: **claim resources** (map registers, request IRQ), **initialize the device** (enable clocks, reset, configure), and **register operations** (tell the kernel what the device can do). If any step fails, probe returns an error and the kernel cleans up. Probe must be idempotent — it may be called multiple times for multiple devices.
+## Order initialization around the first possible observer
 
-## Worked Example
+A conceptual sequence is:
 
-```c
-static int my_uart_probe(struct platform_device *pdev) {
-    struct resource *res;
-    void __iomem *base;
-
-    // 1. Claim resources
-    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-    base = devm_platform_ioremap_resource(pdev, 0);
-    if (IS_ERR(base)) return PTR_ERR(base);
-
-    // 2. Initialize device
-    // (enable clocks, reset, configure)
-
-    // 3. Register operations
-    // (add UART port, register IRQ handler)
-    return 0;
-}
+```text
+allocate per-device state; initialize locks and queues
+obtain and map register resource
+obtain clock/reset resources; put hardware in controlled state
+mask device interrupts and clear stale causes as documented
+obtain IRQ; register handler with fully initialized handler-visible state
+register the device with its subsystem
+unmask/start normal operation when the subsystem protocol permits
 ```
 
-Each step is explicit. If step 1 fails, the kernel cleans up. If step 2 fails, the driver returns an error. If step 3 fails, the driver undoes steps 1 and 2.
+Requesting an IRQ can make a handler callable, including on a shared line with activity from another device. Publishing a subsystem interface can make callbacks callable. Initialize the state those paths will use before either registration. Do not rely on "no user will open it during probe" as a lifetime guarantee.
 
-## The Same Idea Elsewhere
+The exact order of clocks, resets, mapping, and registration is device-specific. The general constraint is that no observer should reach a partially initialized object. Some frameworks perform later startup in an explicit callback; probe should honor that contract instead of eagerly enabling hardware.
 
-- **Hardware:** the device is idle until probe configures it. Probe writes to control registers to enable the device.
-- **RISC-V:** the driver uses MMIO (Chapter 09) to access registers.
-- **OS:** the kernel provides the platform device framework and resource management.
-- **Linux/driver:** probe is the driver's entry point. It is where most driver bugs live.
+## Follow a failure after two successful acquisitions
 
-## When It Fails
+Suppose resource mapping succeeds and a clock is enabled, but IRQ acquisition returns an error. The device must not remain active just because the normal remove callback will never be reached for a failed probe.
 
-Probe maps the registers and returns success, but the device does not work. The driver forgot to enable the device's clock. The registers are accessible but the device is not running. The bug is not the mapping — it is the missing initialization. The fix: read the datasheet and enable all required clocks and resets.
+| Step | Owned resources | Required rollback if next step fails |
+| --- | --- | --- |
+| State allocated | software object | free object |
+| Registers mapped | object, mapping | unmap, then free |
+| Clock enabled | object, mapping, active clock | disable clock, then release earlier resources |
+| IRQ registered | preceding state plus callback | stop source/synchronize as required, release IRQ, then earlier resources |
+
+Linux devm helpers attach managed resources to the device's lifecycle. For example, devm_platform_ioremap_resource obtains a mapped platform resource and returns an error pointer on failure. Check IS_ERR and return PTR_ERR rather than treating every non-null pointer as success. platform_get_irq returns a negative error code on failure, which must not be used as an IRQ number.
+
+Managed release simplifies bookkeeping, but enabling a clock or starting DMA may need an explicit managed action or cleanup path. A mapping release cannot stop hardware still using memory. Devres is a resource-lifetime mechanism, not a device-specific shutdown algorithm.
+
+## Deferred probe is a dependency outcome
+
+If a required provider is not ready, an API may return -EPROBE_DEFER. Propagating that result lets the driver core retry when dependencies become available. Replacing it with a generic permanent error or success hides the intended behavior.
+
+A retry after failure should find no leaked active device or leftover registration from the earlier attempt. This is different from requiring that probe can be called twice on an already live instance with no cleanup. Normal driver-core binding does not ask a driver to stack duplicate live registrations on the same device.
+
+## Define success narrowly enough to test
+
+Returning zero means the driver has successfully bound under its subsystem's expectations. It does not prove every I/O operation has already been exercised. Test the first operation, failure paths, repeated bind/unbind, and provider-not-ready behavior where the environment supports them.
+
+Chapter 29 examines the mapped resource: how the driver turns an offset into a safe MMIO operation and observes whether a command actually reached its intended boundary.
 
 ## Check
 
-1. A driver's probe function returns an error. What does the kernel do?
-   - A) Ignore the error and continue
-   - B) Clean up and mark the device as unprobed
-   - C) Retry probe forever
-   - D) Panic
+1. devm_platform_ioremap_resource returns an error pointer. What should the driver do?
+   - A) Treat any non-null value as a usable mapping.
+   - B) Check IS_ERR and propagate the encoded error.
+   - C) Cast it to an integer physical address.
    - Answer: B
-   - Explanation: If probe fails, the kernel cleans up any resources that were claimed and leaves the device unprobed. The driver may be tried again later.
-   > Hint: What does the kernel do when a driver fails? Does it retry immediately?
+   - Explanation: Error pointers are not null and must not be dereferenced as I/O mappings.
 
-2. Which of these are probe responsibilities? Pick all that apply.
-   - A) Map device registers
-   - B) Request the device's IRQ
-   - C) Register the driver's operations
-   - D) Load the device firmware
-   - Answer: A, B, C
-   - Explanation: Probe maps registers, requests IRQ, and registers operations. Firmware loading is a separate step (and not all devices need it).
-   > Hint: What does the driver need from the device? What does the kernel need from the driver?
+2. Which must be ready before a handler can run? Select all that apply.
+   - A) State and locks accessed by that handler
+   - B) The instance association passed to the IRQ API
+   - C) A promise that no unrelated device will trigger a shared line
+   - Answer: A, B
+   - Explanation: Shared-line delivery is not controlled by this driver alone.
 
-3. A driver is loaded but the device does not work. Probe returned success. What is the most likely cause?
-   - A) The driver is not compiled into the kernel
-   - B) Probe did not fully initialize the device
-   - C) The kernel does not support device trees
-   - D) The device is not described in the device tree
-   - Answer: B
-   - Explanation: Probe returned success, so the driver is loaded and the device is described. The bug is in probe's initialization — something was missed.
-   > Hint: What does probe do? What could it do incompletely?
+3. Add a subsystem-registration failure after IRQ setup to the resource table. Specify which activity must be stopped or synchronized before each release, including work the handler may have queued.
 
-4. Explain why probe must be idempotent — what happens if probe is called twice for the same device?
+4. A clock-get operation returns -EPROBE_DEFER. Explain the consequences of propagating it, converting it to success, and converting it to a permanent error. Identify what must be cleaned up before any retry.
 
-5. A driver's probe function maps registers and requests IRQ, but the device still does not work. List three possible missing initialization steps and the one register read that would distinguish them.
+5. Research challenge: inspect devres and a driver using devm_add_action_or_reset. Identify an active hardware state that ordinary managed memory allocation does not undo, and show how a registered action or explicit failure path handles it.
 
 ## Limits
 
-This chapter shows a simple probe. Real probes handle power management, clock gating, and complex reset sequences. The principle — claim, initialize, register — is the same.
+The sequence is a reasoning framework, not a compilable universal probe. Actual subsystems define publication/startup order and removal obligations. Check the target kernel's helper signatures and dependency behavior when adapting code.
 
 ## Go Deeper
 
-- [Linux Driver Model (probe)](https://docs.kernel.org/driver-api/driver-model/)
-- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
+- [Linux managed device resources](https://docs.kernel.org/driver-api/driver-model/devres.html) — distinguish managed release from operational shutdown.
+- [Linux driver infrastructure](https://docs.kernel.org/driver-api/infrastructure.html) — inspect platform resource, IRQ, and probe helpers.
+- [Linux platform driver model](https://docs.kernel.org/driver-api/driver-model/platform.html) — follow binding and callback lifecycle.
 
 ## Related
 
-Chapter 27, Chapter 29
+- [Chapter 27 — What a Linux Device Driver Is](27_what_a_linux_device_driver_is.md)
+- [Chapter 29 — MMIO in a Real Linux Driver](29_mmio_in_a_real_linux_driver.md)

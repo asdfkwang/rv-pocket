@@ -1,82 +1,81 @@
 # Chapter 39 — Bugs Across Layers
 
-> **Part VIII — A Complete System**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VIII — A Complete System**
 
-## Why This Matters
+## How do you find the boundary that broke?
 
-Real bugs do not stay in one layer. A symptom in userspace may be caused by a driver bug, a hardware errata, or a misconfigured device tree. Debugging across layers is the skill that separates "I fixed the symptom" from "I fixed the bug." The key is to find the layer where the model breaks.
+A cross-layer symptom often admits several explanations. Wrong pixels can come from format, stride, addressing, visibility, lifetime, or the application's own drawing logic. Listing plausible causes is a start; debugging requires observations that separate them.
 
-## Core Idea
+State the expected contract at each handoff, then locate the last observation that matches it and the first that does not. Keep observations distinct from interpretations. "The device read address X" requires different evidence from "software intended to program X."
 
-Every layer has a contract: the datasheet describes the hardware, the driver matches the datasheet, the kernel provides the framework, the application uses the API. A bug is a contract violation. To debug, find the layer where the contract breaks: does the hardware match the datasheet? Does the driver match the datasheet? Does the driver match the kernel API? Does the application match the driver API?
+## Work a repeated-row corruption to a cause
 
-## Worked Example
+Reuse Chapter 36's frame: width 3, height 2, four bytes per pixel, stride 16. The DMA base is `0x40002000`. The CPU writes distinctive row data, and the allocation reserves four padding bytes after each row. The display's first row looks correct; the second begins with a padding-like pixel and the remaining pixels appear shifted.
 
-A display shows wrong colors:
+Initial hypotheses include wrong stride, stale payload, and an incorrect base. Establish concrete evidence:
 
-```text
-1. Check application: are the pixel values correct? Yes.
-2. Check driver: does it write the correct values to the framebuffer? Yes.
-3. Check hardware: does the display controller read the correct addresses? Yes.
-4. Check datasheet: does the display expect the same pixel format? No — it expects BGR, not RGB.
-```
+| Observation | What it supports | What it does not prove |
+| --- | --- | --- |
+| CPU buffer has the expected bytes at offsets 0–27 | producer layout is correct at observation time | device visibility or later immutability |
+| Mapping/ownership trace is correct through presentation | tested publication/lifetime sequence is consistent | every register field is correct |
+| Device base field reports `0x40002000` under its documented readback rules | selected base matches this test | stride matches |
+| Device stride field reads 12 | row step differs from producer's 16 | the origin of the wrong value |
 
-The bug is a contract violation between the driver and the hardware: the driver writes RGB, the display expects BGR. The fix: swap the color channels in the driver.
+Now calculate the consequence rather than guessing. With stride 12, row 1 begins at offset `0x0C`, where the producer placed padding. Its next pixels come from offsets `0x10` and `0x14`, the first two real pixels of the intended second row. That prediction matches the observed pattern.
 
-## The Same Idea Elsewhere
+Follow the stride value backward to the producer of the register setting. Suppose the driver used `width * 4` instead of the supplied pitch. Correct that expression and validate that allocation bounds still cover the last addressed pixel. The root cause is a contract mismatch between buffer layout and device programming; the visible symptom occurs later at scanout.
 
-- **Hardware:** the hardware follows the datasheet (or the errata).
-- **RISC-V:** the CPU follows the ISA.
-- **OS:** the kernel follows its own APIs.
-- **Linux/driver:** the driver follows the datasheet and the kernel API.
+## Choose a falsifying experiment
 
-## When It Fails
+Change the padding to a conspicuous value while keeping visible pixels unchanged. Under the stride hypothesis, the first pixel of the second displayed row should track the padding value. Under a simple red/blue swap hypothesis, that positional dependence is not predicted. This experiment distinguishes explanations more effectively than inserting a delay and observing that the symptom sometimes changes.
 
-A driver works on one board but not another. The driver assumes a fixed clock frequency. The other board has a different clock. The driver reads the wrong timing and programs the device incorrectly. The fix: read the clock frequency from the device tree, not a hard-coded constant.
+Before instrumenting, check that the observation is safe. Reading a consuming FIFO, clearing an event, or changing timing can perturb the state being diagnosed. Prefer non-destructive status, recorded software metadata, and bounded trace buffers where appropriate. State the observation's limitations in the bug report.
+
+## Separate a trigger from a cause
+
+Suppose corruption appears only under heavy load. Load may enlarge the time window for a lifetime race or change when a stale copy is observed; it does not establish "CPU too slow" as the cause. Similarly, a different power supply is a clue about operating conditions, not proof of an electrical fault. Reproduce controlled changes and measure the relevant boundary.
+
+A fix should restore the violated contract. A delay that hides early reuse does not prove the device has finished. A larger buffer that hides an out-of-range DMA write does not validate the programmed length. A broad cache flush that changes timing does not prove the missing guarantee was cache visibility.
+
+## Preserve the reasoning in a regression case
+
+For the stride failure, keep a tiny padded frame test with an unmistakable per-row pattern. Verify the expected register stride and the addresses of first/last pixels. For a lifetime failure, exercise delayed completion and timeout rather than testing only the fast successful path.
+
+The report should include initial conditions, expected boundary behavior, actual observations, competing hypotheses, the discriminating test, and the corrected invariant. Chapter 40 applies this same method to the complete boot-to-userspace chain, where the missing output can be many stages after the actual error.
 
 ## Check
 
-1. A display shows wrong colors. The application writes correct pixel values. What is the next step?
-   - A) Check the driver
-   - B) Check the hardware
-   - C) Check the datasheet
-   - D) Check the device tree
+1. With base `0x40002000` and wrongly programmed stride 12, where does row 1 begin?
+   - A) `0x4000200C`
+   - B) `0x40002010`
+   - C) `0x40002018`
    - Answer: A
-   - Explanation: The application is correct. The next layer is the driver. Check if the driver writes the correct values to the framebuffer.
-   > Hint: Where is the next layer? What does the driver do with the pixel values?
+   - Explanation: The controller advances by its programmed stride, regardless of the producer's intended layout.
 
-2. Which of these are contract violations? Pick all that apply.
-   - A) The driver writes to the wrong register offset
-   - B) The application uses the wrong API
-   - C) The hardware does not match the datasheet
-   - D) The kernel does not match the CPU
-   - Answer: A, B, C
-   - Explanation: A is a driver-datasheet violation, B is an application-driver violation, C is a hardware-datasheet violation. D is not a typical violation — the kernel is ported to match the CPU.
-   > Hint: What are the contracts? Which layer violates which?
+2. Which observations alone prove that a device read the intended payload? Select all that apply.
+   - A) A correct CPU-side buffer dump
+   - B) A successful DMA mapping call
+   - C) Neither of these alone proves device consumption
+   - Answer: C
+   - Explanation: The dump and mapping establish different prerequisites, not the final device-read history.
 
-3. A driver works on one board but not another. Both use the same chip. What is the most likely cause?
-   - A) The driver is not compiled into the kernel
-   - B) The driver assumes a fixed clock frequency
-   - C) The kernel does not support device trees
-   - D) The device is not described in the device tree
-   - Answer: B
-   - Explanation: Different boards may have different clocks. A hard-coded clock frequency works on one board but not another.
-   > Hint: What is different between boards? What does the driver assume?
+3. Predict the complete second row for the wrong-stride case using distinct values for padding and all three intended pixels. Design one changed input that distinguishes this from a component-order error.
 
-4. Explain how to debug a cross-layer bug — what is the systematic approach to finding the layer where the contract breaks?
+4. A 1 ms delay makes corruption disappear. Construct two different underlying bugs consistent with that observation. For each, propose evidence that would distinguish a real repair from a timing workaround.
 
-5. A driver works in the lab but fails in the field. The field has a different power supply. What is the most likely cause, and what would you check first?
+5. Research challenge: take one public kernel bug fix related to DMA, IRQ lifetime, or register access. At fixed before/after revisions, identify the violated contract and explain how the change restores it. Design a regression scenario that would fail for the old reasoning.
 
 ## Limits
 
-This chapter shows a simple cross-layer bug. Real bugs involve timing, concurrency, and hardware errata. The principle — find the layer where the contract breaks — is the same.
+The worked evidence is a constructed case with an explicitly known frame format and safe readback semantics. Real failures can have multiple interacting causes. A hypothesis is justified only to the extent that the available observations and controlled tests distinguish it from alternatives.
 
 ## Go Deeper
 
-- [Linux Kernel Debugging](https://docs.kernel.org/admin-guide/bug-hunting.html)
-- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
+- [Linux DMA debugging](https://docs.kernel.org/core-api/dma-api.html#part-iii-debug-drivers-use-of-the-dma-api) — inspect what DMA API checking can and cannot establish.
+- [Linux tracing documentation](https://docs.kernel.org/trace/) — choose evidence collection appropriate to the execution context.
+- [Linux driver debugging guide](https://docs.kernel.org/driver-api/driver-model/driver.html) — relate driver state and lifecycle to the investigation.
 
 ## Related
 
-Chapter 38, Chapter 40
+- [Chapter 38 — Reading a Linux Driver](38_reading_a_linux_driver.md)
+- [Chapter 40 — From Power-On to Userspace](40_from_power_on_to_userspace.md)

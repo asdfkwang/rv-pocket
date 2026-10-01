@@ -4,7 +4,7 @@ import { escapeHtml as e } from "./html";
 import { EBOOK_CHAPTERS_EN, EBOOK_CHAPTERS_KO, type EbookChapter, type EbookCheckQuestion } from "../ebook-content";
 import { getLang } from "../i18n";
 
-/** The book is per-language, but the same content is used until ebook/ko exists. */
+/** Chapter content is independent of the active episode. */
 function book(): readonly EbookChapter[] {
   return getLang() === "ko" ? EBOOK_CHAPTERS_KO : EBOOK_CHAPTERS_EN;
 }
@@ -18,7 +18,7 @@ let checkIndex = 0;
 const checkWork: Record<string, { selected: string[]; checked: boolean }> = {};
 
 function checkKey(): string {
-  return `${getEbookSlug()}:${checkIndex}`;
+  return `${getLang()}:${getEbookSlug()}:${checkIndex}`;
 }
 
 export function getCheckSelection(): { selected: string[]; checked: boolean } {
@@ -103,8 +103,8 @@ function tocList(activeSlug: string, bookmarks: readonly string[]): string {
       || ch.text.toLowerCase().includes(q),
   );
   if (!items.length) return `<p class="muted">${t("ebookNoMatch")}</p>`;
-  return `<ul class="ebook-toc-list">${items.map((ch) =>
-    `<li><button class="ebook-toc-item${ch.slug === activeSlug ? " active" : ""}" data-action="ebook-open" data-slug="${ch.slug}"${ch.slug === activeSlug ? ' aria-current="true"' : ""}>${bookmarks.includes(ch.slug) ? `<span class="ebook-star" aria-hidden="true">★ </span>` : ""}${e(ch.title)}</button></li>`,
+  return `<ul class="ebook-toc-list">${items.map((ch, i) =>
+    `<li>${ch.part && ch.part !== items[i - 1]?.part ? `<h2 class="ebook-part">${e(ch.part)}</h2>` : ""}<button class="ebook-toc-item${ch.slug === activeSlug ? " active" : ""}" data-action="ebook-open" data-slug="${ch.slug}"${ch.slug === activeSlug ? ' aria-current="true"' : ""}>${bookmarks.includes(ch.slug) ? `<span class="ebook-star" aria-hidden="true">★ </span>` : ""}${e(ch.title)}</button></li>`,
   ).join("")}</ul>`;
 }
 
@@ -124,6 +124,9 @@ export function renderEbook(state: AppState): string {
   const ch = book().find((c) => c.slug === slug) ?? book()[0]!;
   const body = ch.html.replace(/^<h1>.*?<\/h1>\n?/, "");
   const bookmarks = getBookmarks(state.active.id);
+  const index = book().findIndex((c) => c.slug === ch.slug);
+  const previous = book()[index - 1];
+  const next = book()[index + 1];
   return `<div class="ebook">
     <aside class="ebook-side" aria-label="Book contents">
       <button id="ebook-back" class="text-button" data-action="view" data-view="station">${t("back")}</button>
@@ -135,8 +138,10 @@ export function renderEbook(state: AppState): string {
     <article class="ebook-page" aria-labelledby="ebook-title">
       <span class="eyebrow">${t("ebookWordmark")}</span>
       <h1 id="ebook-title" tabindex="-1">${e(ch.title)}</h1>
+      <nav class="ebook-outline" aria-label="${e(ch.title)}"><ul>${ch.headings.filter((h) => h.depth === 2).map((h) => `<li><button class="text-button" data-action="ebook-section" data-heading="${e(h.id)}">${e(h.text)}</button></li>`).join("")}</ul></nav>
       <div class="ebook-body">${body}</div>
       ${ch.check.length ? `<section class="quiz-section" aria-labelledby="ebook-check-heading"><span id="ebook-check-heading" class="eyebrow">${t("ebookCheckFmt", { i: checkIndex + 1, n: ch.check.length })}</span>
+        ${ch.checkIntro ? `<div class="ebook-body">${ch.checkIntro}</div>` : ""}
         ${(() => {
           const q = ch.check[checkIndex]!;
           const work = getCheckSelection();
@@ -162,6 +167,11 @@ export function renderEbook(state: AppState): string {
           <button id="check-harder" class="text-button" data-action="check-harder">${t("ebookHarder")} <span aria-hidden="true">⧉</span></button>`;
         })()}
       </section>` : ""}
+      <div class="ebook-body ebook-after-check">${ch.afterCheckHtml}</div>
+      <nav class="ebook-chapter-nav" aria-label="${t("ebookChaptersNav")}">
+        ${previous ? `<button class="text-button" data-action="ebook-open" data-slug="${previous.slug}">← ${e(previous.title)}</button>` : ""}
+        ${next ? `<button class="text-button" data-action="ebook-open" data-slug="${next.slug}">${e(next.title)} →</button>` : ""}
+      </nav>
     </article>
   </div>`;
 }

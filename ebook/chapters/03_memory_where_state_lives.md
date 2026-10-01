@@ -1,88 +1,88 @@
 # Chapter 03 — Memory: Where State Lives
 
-> **Part I — A Computer That Can Run Code**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part I — A Computer That Can Run Code**
 
-## Why This Matters
+## Where does a variable live?
 
-Every variable, every pixel, every queued byte sits at some address as some bytes. When a screen shows wrong colors or a driver reads garbage, the bytes are almost always fine — they are just being read with the wrong size, order, or address.
+Chapter 02 separated a value from the address that selects it. Now consider a program storing the 32-bit integer `0x12345678`. Our machine addresses memory one byte at a time. A four-byte value therefore occupies four consecutive locations, not one location containing an indivisible printed number.
 
-## Core Idea
+We will use ordinary readable and writable RAM at addresses beginning with `0x1000`. An address labels a byte even when no C variable has been assigned to it. The compiler's decisions about variables and layout determine how software uses the locations; the memory hardware does not know variable names.
 
-Memory is a row of bytes, each with its own address. Loads and stores move bytes between memory and registers. Three things decide what value you actually get: **which address**, **how many bytes** (width), and **in which order** (endianness: little-endian stores the small end first).
+## Write a value, then reconstruct it
 
-## Worked Example
+In little-endian order, the least significant byte goes at the lowest address. "Little" refers to numerical significance, not to the smallest byte value. The bytes of `0x12345678`, from least to most significant, are `78`, `56`, `34`, and `12` in hexadecimal.
 
-Four bytes in memory:
+| Address | Stored byte | Contribution to a 32-bit read at `0x1000` |
+| --- | --- | --- |
+| `0x1000` | `0x78` | `0x78 × 1` |
+| `0x1001` | `0x56` | `0x56 × 256` |
+| `0x1002` | `0x34` | `0x34 × 65536` |
+| `0x1003` | `0x12` | `0x12 × 16777216` |
+
+Adding the contributions reconstructs `0x12345678`. Reading only the byte at `0x1002` instead returns `0x34`. Both observations describe the same memory. The operation specifies the starting address and the number of bytes to combine.
+
+Big-endian interpretation of those same four bytes would produce `0x78563412`. A byte-by-byte copy preserves the stored sequence and does not by itself convert one interpretation to another. This explains why a file format or network protocol must specify order rather than merely say "a 32-bit number."
+
+## A partial write changes a larger value
+
+Now write `0xAA` to the single byte at `0x1001`. The sequence becomes:
 
 ```text
-0x1000: 0x78   0x1001: 0x56   0x1002: 0x34   0x1003: 0x12
+address   1000 1001 1002 1003
+before     78   56   34   12
+ after     78   AA   34   12
 ```
 
-Read them back different ways (little-endian machine):
+A later little-endian four-byte read at `0x1000` returns `0x1234AA78`. The byte write did not know that a larger integer overlapped it. Two pointers can refer to overlapping storage, so an operation through one may change a value later observed through the other.
 
-```text
-lbu @0x1002        → 0x34            (one byte, zero-extended)
-lw  @0x1000        → 0x12345678     (four bytes, small end first)
-lb  @0x1000        → 0x78            (0x78 is positive, sign bit 0)
-```
+This is a machine-level example. Whether a particular pair of typed C pointers may legally alias is a separate language question. We first establish what the bytes do, then respect the language's rules when expressing the operation in C.
 
-Same four bytes, three different answers — all correct, because each read asked a different question.
+## Width and extension are separate steps
 
-## The Same Idea Elsewhere
+The CPU's working registers on RV64 hold 64 bits. A one-byte read must therefore specify how to form a register-sized result. If memory contains `0xF0`, an unsigned byte read produces `0x00000000000000F0`; a signed byte read produces `0xFFFFFFFFFFFFFFF0`. Both fetched exactly one byte. The difference occurred when the CPU extended the result, using Chapter 02's rules.
 
-- **Hardware:** the memory controller serves physical bytes; caches (Chapter 19) may serve an older copy of them.
-- **RISC-V:** `lb/lbu/lh/lhu/lw/lwu/ld` name the width; the `u` versions zero-extend, the plain ones sign-extend.
-- **OS:** the OS hands out memory in page-sized chunks and builds each process its own address space (Chapter 20).
-- **Linux/driver:** kernel pointers, userspace pointers, DMA addresses, and `__iomem` pointers all *look* like addresses but must never be mixed — each may only be used with its own access functions.
+Chapter 06 will name these operations `lbu` and `lb`. You do not need to decode assembly here: first determine which bytes are fetched, then combine them, then extend the result. Keeping those steps distinct prevents a sign-extension bug from being misdiagnosed as a wrong-address bug.
 
-## When It Fails
+A four-byte read is naturally aligned when its address is a multiple of four. `0x1000` qualifies; `0x1001` does not. Alignment tells us a relationship between an address and access width. It does not alone establish whether an access succeeds: memory attributes, permissions, and the platform's handling of misaligned accesses also matter.
 
-A framebuffer shows red and blue swapped. The bytes in RAM are exactly what the artist drew. The bug: software writes pixels as `0xRRGGBB` but the display reads little-endian words, so the first byte on screen is `BB`, not `RR`. Nobody corrupted anything — writer and reader disagreed about order.
+## Diagnose a representation mismatch
+
+A display receives bytes `11 22 33 00`. The producer calls them a pixel with blue `11`, green `22`, red `33`. The consumer instead interprets the first byte as red. The visible color changes even though every byte arrived correctly. To fix this, compare both sides' format definitions: component positions, bytes per pixel, and row stride, the byte distance between successive rows.
+
+"Endianness" is not a complete diagnosis. A disagreement about component order can exist independently of how a CPU loads an integer. Write out a distinctive test pixel and the expected byte sequence at each boundary. The CPU chapter next explains how an instruction asks memory these precise questions.
 
 ## Check
 
-1. Memory holds `0x1000: 78 56 34 12` (little-endian). What does `lw @0x1000` return?
-   - A) `0x12345678`
-   - B) `0x78563412`
-   - C) `0x78`
-   - D) `0x12`
+1. After replacing the byte at `0x1001` with `0xAA`, what does the four-byte little-endian read at `0x1000` produce?
+   - A) `0x1234AA78`
+   - B) `0xAA345678`
+   - C) `0x7856AA12`
    - Answer: A
-   - Explanation: Little-endian puts the small end first: byte 0x78 is the lowest 8 bits, so the word reads `0x12345678`. B is the big-endian reading; C and D read single bytes.
-   > Hint: The byte at the lowest address becomes the lowest digits of the word.
+   - Explanation: The byte at address base + 1 supplies result bits 15:8.
 
-2. About the same four bytes, which statements are true? Pick all that apply.
-   - A) `lbu @0x1002` returns `0x34`
-   - B) `lb @0x1000` returns `0x78`
-   - C) `0x1001` is an odd address, so a word read starting there is unaligned
-   - D) Reading one byte at a time and combining them by hand always gives the same result as `lw`, regardless of endianness
-   - Answer: A, B, C
-   - Explanation: A reads the single byte `0x34`. B: `0x78` has sign bit 0, so sign-extension leaves `0x78`. C is a plain fact about the address (`0x1001` is odd). D is false — hand-combining must follow the machine's byte order, or it reconstructs the wrong word.
-   > Hint: For D, try it: does "first byte read × 16777216" assume big end or little end?
+2. Select all correct statements about reading `0xF0` from accessible RAM.
+   - A) Signed and unsigned byte reads fetch the same stored byte.
+   - B) Sign extension changes that byte in memory.
+   - C) The register result can differ even when address and width match.
+   - Answer: A, C
+   - Explanation: Extension constructs the destination register value; it does not rewrite the source memory.
 
-3. Byte `0xF0` is read once with `lb` and once with `lbu` on RV64. What comes back each time?
-   - A) `lb` → `0xFFFFFFFFFFFFFFF0`, `lbu` → `0xF0`
-   - B) `lb` → `0xF0`, `lbu` → `0xF0`
-   - C) `lb` → `0x10`, `lbu` → `0xF0`
-   - D) Both trap on a negative byte
-   - Answer: A
-   - Explanation: `0xF0` has its top bit set, so it is negative as a signed byte (−16). `lb` sign-extends the 1-bits all the way up; `lbu` pads with zeros. No trap — reading a byte is always legal.
-   > Hint: Top bit 1 means negative. Sign extension copies that 1 leftwards, all the way.
+3. Starting from the original four bytes, perform a two-byte little-endian write of `0xBEEF` at `0x1002`. Show all four bytes and the new 32-bit value. Explain why changing byte order does not change the number of locations written.
 
-4. Look up the Linux Device I/O documentation and explain in your own words why an `__iomem` pointer must never be dereferenced like normal RAM — what could actually go wrong on real hardware?
+4. A format defines red, green, blue, and padding as four consecutive bytes. A program stores the integer `0x00332211` on our machine. Determine the displayed components. Design a byte sequence that makes an accidental red/blue swap unmistakable.
 
-5. A test pattern of red-green-blue squares shows up blue-green-red. The RAM contents match the artist's file byte for byte. Write down the two most likely causes and, for each, the single read that would confirm or kill it.
+5. Research challenge: find the execution-environment rules for misaligned loads in the RISC-V specification. Explain why "odd address" is insufficient to predict a fault for an arbitrary load. Separate a byte access, a word access, and a device access.
 
 ## Limits
 
-This chapter pretends every address behaves like RAM. Device registers can have side effects on read (clear-on-read status bits), and some addresses forbid some widths. Caches add a second copy of the truth (Chapter 19), and virtual memory renames every address (Chapter 20).
+All worked byte operations use ordinary RAM with valid access permissions. MMIO can have read side effects and width restrictions; virtual memory can reject an otherwise aligned access. The byte diagrams describe architectural values, not bus transaction counts or timing.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
+- [RISC-V loads, stores, and alignment](https://docs.riscv.org/reference/isa/unpriv/rv32.html) — examine the execution-environment qualifications on misalignment.
+- [Linux unaligned memory access](https://docs.kernel.org/core-api/unaligned-memory-access.html) — compare machine layout with safe C access patterns.
 
 ## Related
 
-Chapter 02, Chapter 04
+- [Chapter 02 — Bits, Bytes, Numbers, and Addresses](02_bits_bytes_numbers_and_addresses.md)
+- [Chapter 04 — Inside the CPU](04_inside_the_cpu.md)

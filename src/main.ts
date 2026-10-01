@@ -162,6 +162,12 @@ app.addEventListener("click", (event) => {
       announce(getEbookTitle());
       return;
     }
+    case "ebook-section": {
+      const heading = document.getElementById(button.dataset.heading ?? "");
+      heading?.focus({ preventScroll: true });
+      heading?.scrollIntoView({ block: "start" });
+      return;
+    }
     case "check-prev":
     case "check-next": {
       const total = getCheckTotal();

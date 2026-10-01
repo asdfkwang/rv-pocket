@@ -1,84 +1,80 @@
 # Chapter 13 — Exceptions, Traps, and System Calls
 
-> **Part III — CPU Meets Hardware**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part III — CPU Meets Hardware**
 
-## Why This Matters
+## Why did execution leave the instruction stream?
 
-Interrupts are hardware events. **Exceptions** are software events — the CPU detects something wrong (invalid instruction, division by zero, page fault) and transfers control to a handler. **System calls** are deliberate exceptions — the program asks the OS for help. All three are **traps**: the CPU saves state and jumps to a handler.
+Chapter 12 followed a hardware notification. RISC-V uses the broader term trap for a control transfer caused by an interrupt or an exception. An interrupt is asynchronous with respect to the interrupted instruction stream. An exception is associated with executing a particular instruction, such as an illegal instruction, a failed memory access, or an environment call.
 
-## Core Idea
+A system call uses an intentional exception to request a kernel service. The instruction `ecall` does not itself mean "write a byte." Its meaning depends on the current privilege level and the software calling convention. The trap handler interprets the request and decides what happens next.
 
-A trap has three parts: **cause** (why it happened), **saved PC** (where to return), and **handler address** (where to go). The cause is recorded in a CSR (Control and Status Register). The saved PC is in `mepc` (Machine Exception Program Counter). The handler address is in `mtvec` (Machine Trap Vector). When the trap ends, `mret` restores the saved PC and resumes.
+## The entry record is a starting point
 
-## Worked Example
+Assume a supervisor-mode OS and a user-mode program, with the relevant user traps delegated to the supervisor. Chapter 14 explains those privilege levels and delegation. In direct trap-vector mode, entry uses stvec's configured base. Hardware updates sepc with the return/fault instruction address, scause with the reason, and relevant status fields. stval may contain additional information such as a faulting address, according to the exception's rules.
 
-A program executes an invalid instruction:
+These CSRs, control and status registers, are not the general-purpose registers used for arithmetic. Entry assembly still needs to preserve general registers and establish an appropriate stack before running ordinary kernel code.
+
+Consider a user program at `0x4000` requesting a Linux service. Its wrapper places a system-call number in a7 and arguments in a0 onward, then executes ecall. For a user environment-call exception, the synchronous exception code is 8. Delegation in this example routes it to the supervisor rather than the machine-mode firmware.
 
 ```text
-1. CPU detects the invalid instruction, raises an exception
-2. Cause is recorded in mcause (e.g., 2 = illegal instruction)
-3. Current PC is saved in mepc
-4. CPU jumps to the handler address in mtvec
-5. Handler reads mcause, decides what to do (kill the program, emulate, etc.)
-6. Handler executes mret, CPU resumes at mepc
+before entry: user PC=4000; a7=request number; a0...=arguments
+hardware:     sepc=4000; scause=8; enter supervisor trap vector
+software:     save registers; validate request; run service
+software:     saved a0=result; sepc=4004 for this completed ecall
+exit:         restore registers; sret resumes user code at 4004
 ```
 
-A system call is the same mechanism, but the program triggers it deliberately with the `ecall` instruction.
+The ecall instruction is four bytes, so advancing this saved PC by four skips the completed request. This is a handler decision. A generic trap handler must not increment every saved PC by four regardless of cause.
 
-## The Same Idea Elsewhere
+## Retrying is different from skipping
 
-- **Hardware:** the trap logic is hardwired — detect exception, save state, jump to vector.
-- **RISC-V:** the privileged spec defines `mcause`, `mepc`, `mtvec`, and `mret`. Different causes have different exception codes.
-- **OS:** the OS installs a trap handler at boot. The handler dispatches based on the cause: page fault → allocate page, system call → service request, illegal instruction → kill process.
-- **Linux/driver:** drivers rarely handle traps directly, but page faults in kernel space are fatal (no user process to kill). Understanding traps helps read oops messages.
+Suppose a load at `0x5000` references a valid part of a process's address space whose page is not currently installed. If the OS can supply the page, it repairs the mapping and returns with sepc still `0x5000`. The load executes again and can now complete. Advancing to `0x5004` would skip the load and leave its destination without the intended result.
 
-## When It Fails
+If the access violates policy, the OS may instead signal or terminate the process. Kernel faults are also context-dependent: a fault during an authorized user-memory copy can have a defined recovery path, whereas an unexpected kernel pointer fault may indicate a serious bug. "Kernel fault" does not automatically imply one universal outcome.
 
-A driver accesses a bad pointer in kernel space. The CPU raises a page fault. The OS tries to handle it, but the fault happened in kernel context — there is no user process to kill. The kernel panics. The bug is the bad pointer; the panic is the consequence of being in kernel context.
+For an asynchronous interrupt, the saved PC identifies where the interrupted computation should resume. No instruction is skipped merely because a device needed attention. Thus one entry mechanism supports three different return policies: continue after a completed request, retry a repaired faulting instruction, or resume after asynchronous service.
+
+## Let the specification identify the cause
+
+An intuitive high-level error is not always a hardware exception. With the relevant RISC-V integer division support present, division by zero has defined quotient/remainder results rather than raising a divide-by-zero trap. Unsupported instruction encoding is a different issue and can produce an illegal-instruction exception.
+
+Debugging begins with the recorded cause, saved PC, instruction bytes, and relevant address information. A handler printing only "trap" throws away the evidence needed to distinguish a bad pointer, unsupported instruction, and deliberate system call.
+
+The next chapter explains why the handler has authority the requesting application lacks, and which state prevents a user program from simply granting itself that authority.
 
 ## Check
 
-1. A program executes `ecall`. What type of trap is this?
-   - A) Interrupt
-   - B) Exception
-   - C) System call
-   - D) Both B and C
-   - Answer: D
-   - Explanation: `ecall` is a deliberate exception (B) used to make system calls (C). It is not an interrupt — interrupts come from hardware.
-   > Hint: `ecall` is executed by software. What is it for?
+1. An OS repairs a recoverable page fault from a load at `0x5000`. Where should it normally resume that operation?
+   - A) `0x5000`
+   - B) Always `0x5004`
+   - C) The address of the loaded data
+   - Answer: A
+   - Explanation: Retrying the load obtains the value; skipping it leaves the computation incomplete.
 
-2. Which of these are recorded when a trap occurs? Pick all that apply.
-   - A) The cause of the trap (mcause)
-   - B) The PC of the trapping instruction (mepc)
-   - C) The handler address (mtvec)
-   - D) All general-purpose registers
-   - Answer: A, B, C
-   - Explanation: The CPU saves the cause, the PC, and uses the handler address. General-purpose registers are NOT automatically saved — the handler must save them if needed.
-   > Hint: What does the hardware save automatically? What must software save?
+2. Which facts are correct? Select all that apply.
+   - A) ecall identifies a Linux service without any register convention.
+   - B) scause distinguishes the recorded trap reason.
+   - C) Software must preserve general registers needed by the interrupted computation.
+   - Answer: B, C
+   - Explanation: Software conventions give meaning to ecall arguments; trap metadata is not a full register save.
 
-3. A page fault occurs in kernel space. Why is this more serious than a page fault in user space?
-   - A) Kernel page faults are slower
-   - B) There is no user process to kill — the kernel panics
-   - C) Kernel page faults corrupt hardware
-   - D) Kernel page faults are always caused by hardware bugs
-   - Answer: B
-   - Explanation: A user-space page fault can be handled by killing the process. A kernel-space page fault means the kernel itself accessed an invalid address — there is nothing to fall back to, so the kernel panics.
-   > Hint: What does the OS do with a user process that faults? What happens when the kernel itself faults?
+3. Create a table comparing a user ecall, a recoverable load page fault, and an external interrupt. Include the origin, saved PC meaning, handler action, and return-PC policy.
 
-4. Explain the difference between a trap and an interrupt — what is the source of each, and how does the handler know which one occurred?
+4. A handler unconditionally adds four to sepc. Produce two distinct failing scenarios, one involving retry and another involving instruction length or asynchronous interruption. Explain the missing information in the handler's rule.
 
-5. A program divides by zero. Trace the trap: what instruction triggered it, what cause code is recorded, where is the PC saved, and what does the OS handler do?
+5. Research challenge: verify integer divide-by-zero behavior in the unprivileged ISA and user ecall's exception code in the privileged ISA. Explain how to distinguish an unsupported divide instruction from a supported divide with a zero operand using trap evidence.
 
 ## Limits
 
-This chapter shows the RISC-V trap mechanism. Other architectures have similar concepts with different names (x86: IDT, exception vectors). The key idea — save state, jump to handler, restore state — is universal.
+The example selects S-mode direct-vector entry and explicit delegation. Other configurations enter M-mode or use vectored interrupt entry. The system-call register convention is an OS ABI, and complete Linux entry code handles more state than this conceptual trace.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Kernel Oops](https://docs.kernel.org/admin-guide/bug-hunting.html)
+- [RISC-V supervisor trap registers](https://docs.riscv.org/reference/isa/priv/supervisor.html) — verify sepc, scause, stval, and stvec.
+- [RISC-V integer division](https://docs.riscv.org/reference/isa/unpriv/m-st-ext.html) — check exceptional arithmetic results.
+- [Linux RISC-V entry code](https://github.com/torvalds/linux/blob/master/arch/riscv/kernel/entry.S) — locate software register saving and restoration.
 
 ## Related
 
-Chapter 12, Chapter 14
+- [Chapter 12 — Interrupts: Hardware Wants Attention](12_interrupts_hardware_wants_attention.md)
+- [Chapter 14 — Privilege: M, S, and U](14_privilege_m_s_and_u.md)

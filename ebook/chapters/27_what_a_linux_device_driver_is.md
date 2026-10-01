@@ -1,95 +1,87 @@
 # Chapter 27 — What a Linux Device Driver Is
 
-> **Part VII — Linux Device Drivers**  
-> **Rule:** Easy to read. Hard to solve. Deep when you want it.
+> **Part VII — Linux Device Drivers**
 
-## Why This Matters
+## Where does a driver begin and end?
 
-A driver is the kernel's agent for a specific device. It translates generic OS operations (read, write, ioctl) into device-specific register operations. When a device misbehaves, the driver is usually where the bug lives — wrong register, wrong timing, wrong assumption about hardware state.
+Chapter 26 produced a device object and a possible driver match. A Linux driver is code that participates in kernel frameworks through registered operations. It does not usually own a main loop. The kernel calls it when a device is bound, an operation is requested, an event arrives, power state changes, or the device is removed.
 
-## Core Idea
+There are two different interfaces to identify. The bus-facing interface handles matching and lifecycle, such as a platform driver's probe and remove callbacks. The subsystem-facing interface implements behavior appropriate to the device class, such as serial, input, network, or storage operations. Not every driver directly implements a userspace read/write file operation.
 
-A driver is a set of functions that the kernel calls: probe (initialize), remove (cleanup), read/write (data transfer), ioctl (device-specific commands), and interrupt handler (event notification). The driver registers these functions with the kernel. When the kernel finds a matching device, it calls probe. When the device is removed, it calls remove.
+## Follow a serial driver's two registrations
 
-## Worked Example
+Consider our teaching UART adapted to the Linux serial framework. A platform match leads to probe. Probe prepares per-device state and registers a serial port with the serial subsystem. Serial operations then call the UART-specific callbacks when transmission or configuration changes are needed.
 
-A simple UART driver:
-
-```c
-static struct uart_ops my_uart_ops = {
-    .start_tx = my_uart_start_tx,
-    .stop_rx = my_uart_stop_rx,
-    .set_termios = my_uart_set_termios,
-};
-
-static int my_uart_probe(struct platform_device *pdev) {
-    // map registers
-    // request IRQ
-    // register UART port
-    return 0;
-}
-
-static struct platform_driver my_uart_driver = {
-    .probe = my_uart_probe,
-    .driver = { .name = "my_uart", .of_match_table = my_uart_of_match },
-};
+```text
+platform bus                         serial subsystem
+match device to driver               application/TTY request
+        |                                     |
+      probe -> prepare port -> register port   |
+                                      -> UART operation callback
+                                            -> MMIO / queued data
 ```
 
-The kernel matches the device tree node to `my_uart_of_match`, calls probe, and the driver is live.
+A conceptual operation table could include start_tx, stop_rx, and set_termios. These callback names belong to a serial framework contract; they are not interchangeable with arbitrary read/write methods. The framework handles shared policy and plumbing while the driver implements the hardware-specific part.
 
-## The Same Idea Elsewhere
+This division explains why copying a character-device tutorial into a serial driver can miss essential behavior. Start from the subsystem that already represents the device's function. A normal keyboard belongs in the input subsystem; a normal network interface belongs in networking. Chapter 33 compares userspace interfaces without assuming one `/dev` design fits everything.
 
-- **Hardware:** the driver programs the device's registers (Chapter 10) and handles its interrupts (Chapter 12).
-- **RISC-V:** the driver uses MMIO (Chapter 09) to access device registers.
-- **OS:** the kernel provides the driver framework (platform devices, device tree matching).
-- **Linux/driver:** the driver is the code that makes a specific device work under Linux.
+## One driver can manage several instances
 
-## When It Fails
+Suppose the board has UART0 and UART1. The driver code is shared, but each instance needs its own mapped registers, interrupt identifier, locks, queues, and lifecycle state. Store these in a per-device object rather than one global base pointer that the second probe overwrites.
 
-A driver's probe function returns success but the device does not work. The driver mapped the registers but forgot to enable the device's clock. The device is accessible but not running. The bug is not the mapping — it is the missing initialization step. The fix: read the datasheet and enable all required clocks and resets.
+```text
+shared driver code
+    device state A: base A, IRQ A, queue A, lock A
+    device state B: base B, IRQ B, queue B, lock B
+```
+
+Per-device state solves instance association. It does not automatically solve concurrent access: two callbacks for the same device may still overlap or run in different contexts. Chapter 18's synchronization rules apply inside the object.
+
+A useful review question for every callback is: how does it find the correct instance, what context does it run in, and which resources are guaranteed alive? Those three answers often explain more than the function's name.
+
+## Unregistration is part of the design
+
+When removing a device, stop new operations through its published interface, prevent new device work, quiesce in-flight hardware activity, and drain or synchronize relevant callbacks before releasing the resources they access. The exact ordering follows the subsystem and hardware protocol; it cannot be replaced by simply freeing the per-device structure.
+
+A late interrupt using a freed object is a lifetime failure even if the MMIO code is correct. A queued worker using an unmapped base is another. Resource management helpers can pair acquisitions and releases, but they do not infer the device's stop sequence or cancel every asynchronous operation for you.
+
+Likewise, loading a module only makes driver code available and registered. It does not prove a device matched, probe succeeded, or a userspace interface became usable. Diagnose these as distinct milestones.
+
+Chapter 28 takes the first callback, probe, and follows a partial failure with explicit resource ownership.
 
 ## Check
 
-1. A driver's probe function is called. What is its main job?
-   - A) Register the driver with the kernel
-   - B) Initialize the device and register its operations
-   - C) Load the device firmware
-   - D) Create a device file in /dev
+1. A driver module loads successfully. Which conclusion is justified by that fact alone?
+   - A) Every matching device is initialized and working.
+   - B) The module's initialization succeeded; binding and device operation need separate evidence.
+   - C) A device file must exist.
    - Answer: B
-   - Explanation: probe initializes the device (map registers, enable clocks) and registers the driver's operations with the kernel.
-   > Hint: What does the kernel need from the driver? What does the driver need from the device?
+   - Explanation: Driver availability, match, probe, subsystem publication, and operation are different stages.
 
-2. Which of these are typical driver functions? Pick all that apply.
-   - A) probe
-   - B) remove
-   - C) read/write
-   - D) schedule
-   - Answer: A, B, C
-   - Explanation: probe, remove, and read/write are standard driver functions. schedule is the kernel scheduler's job, not the driver's.
-   > Hint: What does the kernel call when a device appears? When it disappears? When data is transferred?
+2. Which state should normally belong to a device instance? Select all that apply.
+   - A) Its MMIO mapping
+   - B) Its queue and lock
+   - C) One global base pointer overwritten by every probe
+   - Answer: A, B
+   - Explanation: Shared code can serve several independent instances; a single mutable base pointer loses that association.
 
-3. A driver is loaded but the device does not work. The device tree node exists with the correct compatible string. What is the most likely cause?
-   - A) The driver is not compiled into the kernel
-   - B) The driver's probe function failed silently
-   - C) The kernel does not support device trees
-   - D) The device is not described in the device tree
-   - Answer: B
-   - Explanation: If probe fails (e.g., register mapping fails), the driver may return an error but the kernel may not report it clearly. The device is described but not initialized.
-   > Hint: What does probe do? What happens if it fails?
+3. Draw the bus-facing and subsystem-facing paths for a UART and an input button. Identify the callback boundary where each framework hands work to device-specific code.
 
-4. Explain the difference between a platform driver and a PCI driver — how does each one discover its devices?
+4. A remove callback frees the per-device object while a previously queued worker remains runnable. Construct the failure timeline and state the lifetime evidence needed before the free becomes safe.
 
-5. A driver handles interrupts but the handler is never called. List three possible causes and the one register read that would distinguish them.
+5. Research challenge: select one upstream driver and record a commit. Identify its bus registration, subsystem registration, per-device state, and one asynchronous callback. Explain how that callback obtains its instance and what keeps the state alive.
 
 ## Limits
 
-This chapter shows a simple platform driver. Real drivers handle DMA (Chapter 32), power management, and complex initialization sequences. The principle — a set of functions the kernel calls to manage a device — is the same.
+This chapter describes the driver model at the lifecycle level. Callback sets and contexts differ by subsystem, bus, configuration, and kernel version. It is not a template promising that every driver needs a direct userspace read/write operation.
 
 ## Go Deeper
 
-- [Linux Driver Model](https://docs.kernel.org/driver-api/driver-model/)
-- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
+- [Linux driver model overview](https://docs.kernel.org/driver-api/driver-model/overview.html) — identify bus, device, and driver relationships.
+- [Linux low-level serial API](https://docs.kernel.org/driver-api/serial/driver.html) — inspect the UART operation contract.
+- [Linux platform devices and drivers](https://docs.kernel.org/driver-api/driver-model/platform.html) — connect matching to per-device probe/remove.
 
 ## Related
 
-Chapter 26, Chapter 28
+- [Chapter 26 — Device Tree: Describing the Machine](26_device_tree_describing_the_machine.md)
+- [Chapter 28 — Probe: Meeting the Device](28_probe_meeting_the_device.md)
