@@ -192,13 +192,16 @@ box("Battery_Label", -1.25, face(0.195), -0.72, 0.48, 0.01, 0.28, mat_wire_y, be
 box("Battery_Term_A", -1.02, face(0.20), -0.72, 0.06, 0.03, 0.12, mat_copper, bevel=0.005)
 box("Battery_Term_B", -1.48, face(0.20), -0.72, 0.06, 0.03, 0.12, mat_copper, bevel=0.005)
 
-# ---------------------------------------------------------------- speaker (bottom-right)
-cyl("Speaker_Cone", 1.05, face(0.09), 0.42, 0.26, 0.16, mat_speaker, rot=(math.radians(90), 0, 0))
-cyl("Speaker_Magnet", 1.05, face(0.03), 0.42, 0.13, 0.07, mat_cpu, rot=(math.radians(90), 0, 0))
+# ---------------------------------------------------------------- speaker
+# Kept well inside the board edge (PCB half-width is 1.8).
+SPK_X, SPK_Z = 0.95, 0.45
+cyl("Speaker_Cone", SPK_X, face(0.09), SPK_Z, 0.24, 0.16, mat_speaker, rot=(math.radians(90), 0, 0))
+cyl("Speaker_Magnet", SPK_X, face(0.03), SPK_Z, 0.12, 0.07, mat_cpu, rot=(math.radians(90), 0, 0))
 
 # ---------------------------------------------------------------- D-pad switch + button housings
-box("Switch_DPad", -1.55, face(0.06), -0.55, 0.42, 0.10, 0.42, mat_chip, bevel=0.015)
-for i, (bx, bz) in enumerate([(-0.55, -0.72), (0.15, -0.72), (1.55, -0.28), (1.95, 0.32)]):
+box("Switch_DPad", -1.52, face(0.06), -0.62, 0.42, 0.10, 0.42, mat_chip, bevel=0.015)
+# Button/switch housings mirror the front controls, but stay inside the board.
+for i, (bx, bz) in enumerate([(-0.62, -0.72), (0.02, -0.72), (1.32, -0.34), (1.58, 0.22)]):
     box("Switch_Btn_%d" % i, bx, face(0.07), bz, 0.34, 0.12, 0.34, mat_chip, bevel=0.02)
 
 # ---------------------------------------------------------------- small ICs + resistors
@@ -219,10 +222,10 @@ trace("Trace_CPU_Screen", (CX - 0.30, CZ + 0.38), (-1.20, 1.10), mat_wire_g)
 trace("Trace_CPU_Screen_2", (CX + 0.10, CZ + 0.38), (0.30, 1.10), mat_wire_r)
 trace("Trace_Batt_PCB", (-1.10, -0.72), (-0.10, 0.00), mat_wire_r)
 trace("Trace_Batt_PCB_2", (-1.42, -0.72), (-0.20, -0.10), mat_wire_b)
-trace("Trace_PCB_Speaker", (0.62, 0.28), (1.05, 0.42), mat_wire_y)
+trace("Trace_PCB_Speaker", (0.62, 0.28), (SPK_X, SPK_Z), mat_wire_y)
 trace("Trace_PCB_DPad", (-1.52, -0.62), (-0.62, 0.10), mat_wire_g)
-trace("Trace_PCB_Btn1", (-0.62, -0.72), (1.42, -0.34), mat_wire_r)
-trace("Trace_PCB_Btn2", (-0.62, -0.72), (1.76, 0.22), mat_wire_b)
+trace("Trace_PCB_Btn1", (-0.62, -0.72), (1.32, -0.34), mat_wire_r)
+trace("Trace_PCB_Btn2", (-0.62, -0.72), (1.58, 0.22), mat_wire_b)
 
 # short branch stubs, also right-angled, for bus-like density
 wire("Trace_Bus_1", [(0.30, -0.85), (0.30, -1.05), (1.00, -1.05)], mat_wire_g, depth=0.011)
@@ -241,6 +244,19 @@ for _c in ("COL_pocket_exterior", "COL_controls", "COL_screen"):
     set_hidden(_c, True)
 for o in col_int.objects:
     o.hide_render = False
+
+# bounds check: nothing may stick out past the PCB outline
+PCB_HW, PCB_HH = 1.8, 1.2
+_oob = []
+for o in col_int.objects:
+    if o.type != "MESH":
+        continue
+    for v in o.data.vertices:
+        wx = o.matrix_world @ v.co
+        if abs(wx.x) > PCB_HW + 1e-3 or abs(wx.z) > PCB_HH + 1e-3:
+            _oob.append(o.name)
+            break
+print("OUT-OF-BOUNDS:", sorted(set(_oob)) if _oob else "none", flush=True)
 
 _restore = {}
 for _ln, _e in (("Key_Front", 400), ("Rim_Blue_L", 260), ("Rim_Orange_R", 260),

@@ -111,8 +111,8 @@ def _set(name, base, rough, metallic=0.0, emission=None,
         except Exception:
             pass
 
-_set("Mat_Cream", (1.0, 0.93, 0.80, 1.0), 0.38, clearcoat=0.35,
-     subsurface=0.08, sub_color=(1.0, 0.85, 0.7, 1.0))
+_set("Mat_Cream", (1.0, 0.95, 0.86, 1.0), 0.36, clearcoat=0.35,
+     subsurface=0.06, sub_color=(1.0, 0.90, 0.78, 1.0))
 _set("Mat_BackDark", (0.16, 0.11, 0.08, 1.0), 0.5)
 _set("Mat_BackWarm", (0.45, 0.33, 0.28, 1.0), 0.42, clearcoat=0.3)
 _set("Mat_Screen", (0.07, 0.08, 0.11, 1.0), 0.12, clearcoat=1.0)
@@ -120,7 +120,7 @@ _set("Mat_Pixel", (0.0, 0.0, 0.0, 1.0), 0.5,
      emission=(0.62, 1.0, 0.05), emission_strength=7.0)
 _set("Mat_DPad", (0.12, 0.12, 0.14, 1.0), 0.35, clearcoat=0.6)
 _set("Mat_Black", (0.03, 0.03, 0.04, 1.0), 0.45)
-_set("Mat_Red", (0.92, 0.14, 0.13, 1.0), 0.22, clearcoat=1.0)
+_set("Mat_Red", (0.88, 0.09, 0.08, 1.0), 0.22, clearcoat=1.0)
 
 mat_cream = bpy.data.materials.get("Mat_Cream")
 mat_back_dark = bpy.data.materials.get("Mat_BackDark")
@@ -131,8 +131,9 @@ mat_red = bpy.data.materials.get("Mat_Red")
 # CRT-only mats (create once; never overwrite)
 mat_led = principled("Mat_LED", base=(0.1, 0.0, 0.0, 1.0), rough=0.4,
                      emission=(1.0, 0.08, 0.05), emission_strength=5.0)
-# CRT housing: warm gray-beige, a touch darker than pocket cream (my call)
-mat_crt = principled("Mat_CRT", base=(0.82, 0.74, 0.62, 1.0), rough=0.5, clearcoat=0.2)
+# CRT housing: same cream family as the pocket console so the set reads as
+# one system. Only slightly cooler/duller so the two objects stay distinct.
+mat_crt = principled("Mat_CRT", base=(0.93, 0.87, 0.76, 1.0), rough=0.5, clearcoat=0.2)
 
 def rounded_box(name, loc, size, bevel_w=0.2, subdiv=2, rlvl=2):
     bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
@@ -282,8 +283,8 @@ trk.up_axis = "UP_Y"
 # CRT sits ~2 units from the orange rim light: dim the shared rig for this
 # render only, then restore so the pocket look is untouched.
 _dim = {}
-for _lname, _e in (("Key_Front", 250), ("Rim_Blue_L", 180), ("Rim_Orange_R", 180),
-                   ("Top_Warm", 100), ("Fill_Front", 50)):
+for _lname, _e in (("Key_Front", 330), ("Rim_Blue_L", 240), ("Rim_Orange_R", 240),
+                   ("Top_Warm", 140), ("Fill_Front", 70)):
     _o = bpy.data.objects.get(_lname)
     if _o is not None:
         _dim[_lname] = _o.data.energy

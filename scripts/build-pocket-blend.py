@@ -99,8 +99,8 @@ def principled(name, base=(1, 1, 1, 1), rough=0.4, metallic=0.0,
             pass
     return mat
 
-mat_cream = principled("Mat_Cream", base=(1.0, 0.93, 0.80, 1.0), rough=0.38,
-                       clearcoat=0.35, subsurface=0.08, sub_color=(1.0, 0.85, 0.7, 1.0))
+mat_cream = principled("Mat_Cream", base=(1.0, 0.95, 0.86, 1.0), rough=0.36,
+                       clearcoat=0.35, subsurface=0.06, sub_color=(1.0, 0.90, 0.78, 1.0))
 mat_back_dark = principled("Mat_BackDark", base=(0.16, 0.11, 0.08, 1.0), rough=0.5)
 mat_back_warm = principled("Mat_BackWarm", base=(0.45, 0.33, 0.28, 1.0), rough=0.42, clearcoat=0.3)
 mat_screen = principled("Mat_Screen", base=(0.07, 0.08, 0.11, 1.0), rough=0.12, clearcoat=1.0)
@@ -108,7 +108,7 @@ mat_pixel = principled("Mat_Pixel", base=(0.0, 0.0, 0.0, 1.0), rough=0.5,
                        emission=(0.62, 1.0, 0.05), emission_strength=7.0)
 mat_dpad = principled("Mat_DPad", base=(0.12, 0.12, 0.14, 1.0), rough=0.35, clearcoat=0.6)
 mat_black = principled("Mat_Black", base=(0.03, 0.03, 0.04, 1.0), rough=0.45)
-mat_red = principled("Mat_Red", base=(0.92, 0.14, 0.13, 1.0), rough=0.22, clearcoat=1.0)
+mat_red = principled("Mat_Red", base=(0.88, 0.09, 0.08, 1.0), rough=0.22, clearcoat=1.0)
 mat_pcb = principled("Mat_PCB", base=(0.05, 0.28, 0.16, 1.0), rough=0.6)
 mat_cpu = principled("Mat_CPU", base=(0.12, 0.12, 0.14, 1.0), rough=0.3, metallic=0.7)
 
@@ -230,11 +230,15 @@ def pixel(name, x, z, sx=0.16, sz=0.16):
     set_mat(o, mat_pixel); link(o, col_scr)
     return o
 
-pixel("PX_Eye_L", -1.06, 0.84, sx=0.13, sz=0.36)
-pixel("PX_Eye_R", 0.16, 0.84, sx=0.13, sz=0.36)
-pixel("PX_Cheek_L", -0.78, 0.42, sx=0.15, sz=0.15)
-pixel("PX_Cheek_R", -0.12, 0.42, sx=0.15, sz=0.15)
-pixel("PX_Mouth", -0.45, 0.28, sx=0.44, sz=0.15)
+# Pixel grid: 1 unit = 0.17. Every element is placed on that grid so the gaps
+# between LEDs stay visible. Cheeks and mouth used to overlap vertically and
+# merge into one blob; keep at least one unit of clearance everywhere.
+U = 0.17
+pixel("PX_Eye_L", SX - 0.60, SZ + 0.31, sx=U, sz=U * 3.0)
+pixel("PX_Eye_R", SX + 0.60, SZ + 0.31, sx=U, sz=U * 3.0)
+pixel("PX_Cheek_L", SX - 0.27, SZ - 0.09, sx=U, sz=U)
+pixel("PX_Cheek_R", SX + 0.27, SZ - 0.09, sx=U, sz=U)
+pixel("PX_Mouth", SX, SZ - 0.36, sx=U * 3.0, sz=U)
 
 # ---- controls. They may stand slightly proud of SHELL_FRONT but must stay
 # ---- inside the shell outline and clear of the screen.
@@ -375,7 +379,7 @@ def halo_mat(name, transparency):
     transp = nodes.new("ShaderNodeBsdfTransparent")
     emis = nodes.new("ShaderNodeEmission")
     emis.inputs["Color"].default_value = (0.62, 1.0, 0.05, 1.0)
-    emis.inputs["Strength"].default_value = 1.8
+    emis.inputs["Strength"].default_value = 1.4
     mix = nodes.new("ShaderNodeMixShader")
     mix.inputs["Fac"].default_value = transparency
     links.new(transp.outputs["BSDF"], mix.inputs[1])
@@ -386,7 +390,8 @@ def halo_mat(name, transparency):
 mat_halo_in = halo_mat("Mat_HaloIn", 0.80)
 mat_halo_out = halo_mat("Mat_HaloOut", 0.93)
 for _px in [o for o in list(col_scr.objects) if o.name.startswith("PX_")]:
-    for _i, (_s, _m) in enumerate(((1.25, mat_halo_in), (1.5, mat_halo_out))):
+    # halo must stay small: a wide halo fills the gaps and merges the LEDs
+    for _i, (_s, _m) in enumerate(((1.12, mat_halo_in), (1.26, mat_halo_out))):
         _h = _px.copy()
         _h.data = _px.data.copy()
         _h.name = _px.name + "_Halo%d" % _i
