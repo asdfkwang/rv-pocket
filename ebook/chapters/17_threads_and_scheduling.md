@@ -5,77 +5,76 @@
 
 ## Why This Matters
 
-A thread has independent execution state while sharing an address space with other threads, and the scheduler allocates CPUs to runnable tasks. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A process is heavy: its own address space, its own files, its own everything. **Threads** are lighter: multiple execution streams within one process, sharing memory and files. Threads make parallelism easier, but they also make bugs easier — shared memory means shared state, and shared state means races.
 
 ## Core Idea
 
-A thread has independent execution state while sharing an address space with other threads, and the scheduler allocates CPUs to runnable tasks.
+A thread is like a process, but it shares the address space with other threads in the same process. Each thread has its own stack and registers, but they all see the same global variables. The **scheduler** decides which thread runs when. It uses a **time slice** (quantum): each thread runs for a short time, then the scheduler picks another.
 
-A wakeup does not mean immediate execution; it is the event that makes a task runnable. Preemption, timers, and I/O completion keep changing the execution order.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Two threads in one process:
 
 ```text
-CPU0: A running, B runnable, C sleeping
-IRQ wakes C
-→ C runnable
-→ scheduler decides next
+Thread 1: while (true) { x = x + 1; }
+Thread 2: while (true) { x = x + 1; }
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+Both threads increment the same variable `x`. The scheduler switches between them. If the switch happens between the read and write of `x`, one increment is lost. This is a **race condition**: the result depends on the timing of the switch.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the CPU provides the timer interrupt that triggers the scheduler, and the context switch mechanism (Chapter 16).
+- **RISC-V:** the privileged spec defines the timer and trap mechanism.
+- **OS:** the OS scheduler uses these mechanisms to implement scheduling policies (round-robin, priority, etc.).
+- **Linux/driver:** a driver that handles interrupts must be thread-safe. If two threads call the driver concurrently, the driver's state can be corrupted.
 
-Timers and IPIs can trigger scheduling decisions.
+## When It Fails
 
-### In RISC-V
-
-Timer interrupts and software interrupts can connect to SMP scheduling.
-
-### Why the OS Cares
-
-The scheduler invokes a context switch based on the runnable set and policy.
-
-### In Linux / Driver
-
-The Linux scheduler uses scheduling classes and per-CPU state and interacts with driver wakeups.
-
-## Trace It
-
-1. **Hardware:** Timers and IPIs can trigger scheduling decisions.
-2. **RISC-V:** Timer interrupts and software interrupts can connect to SMP scheduling.
-3. **OS:** The scheduler invokes a context switch based on the runnable set and policy.
-4. **Linux / Driver:** The Linux scheduler uses scheduling classes and per-CPU state and interacts with driver wakeups.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+Two threads increment a counter without a lock. The increment is `read x, add 1, write x`. If the switch happens after the read but before the write, the other thread's increment is lost. The final value is less than expected. The fix: use a lock or an atomic operation to make the increment indivisible.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. Two threads share a global variable. Both increment it without a lock. What is the most likely outcome?
+   - A) The variable is always correct
+   - B) The variable may be less than expected due to lost updates
+   - C) The variable is always zero
+   - D) The program crashes immediately
+   - Answer: B
+   - Explanation: Without a lock, the read-modify-write sequence can interleave, causing lost updates. The result is non-deterministic.
+   > Hint: What happens if the switch occurs between the read and the write?
 
-1. Explain why a wakeup and a context switch are not the same event.
-2. Explain why two threads need their own stacks and registers even though they share memory.
-3. Find and summarize the EEVDF/CFS description in the current Linux scheduler documentation.
-4. Find one rule or API directly related to **Threads and Scheduling** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these do threads in the same process share? Pick all that apply.
+   - A) Global variables
+   - B) The stack
+   - C) Open file descriptors
+   - D) The heap
+   - Answer: A, C, D
+   - Explanation: Threads share the address space: globals, heap, and file descriptors. Each thread has its own stack.
+   > Hint: What is per-thread? What is per-process?
+
+3. A scheduler uses a time slice of 10ms. What happens when a thread's time slice expires?
+   - A) The thread is killed
+   - B) The thread is switched out and another thread runs
+   - C) The thread continues running
+   - D) The thread is moved to a lower priority
+   - Answer: B
+   - Explanation: When the time slice expires, the timer interrupt fires, the scheduler runs, and a different thread is selected. The first thread is saved and will run again later.
+   > Hint: What triggers the scheduler? What does it do?
+
+4. Explain why threads are lighter than processes — what is shared, and what is the cost of that sharing?
+
+5. A thread acquires a lock and then blocks on I/O. What happens to other threads that need the same lock, and what is this situation called?
+
+## Limits
+
+This chapter shows a simple scheduler. Real schedulers have priorities, affinity (pinning threads to cores), and complex policies (CFS in Linux). The principle — time-sliced scheduling with context switches — is the same.
 
 ## Go Deeper
 
 - [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Generic IRQ](https://docs.kernel.org/core-api/genericirq.html)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux Threads](https://docs.kernel.org/process/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- A thread has independent execution state while sharing an address space with other threads, and the scheduler allocates CPUs to runnable tasks.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 16, Chapter 18

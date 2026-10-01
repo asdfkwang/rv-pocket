@@ -5,74 +5,85 @@
 
 ## Why This Matters
 
-Do not read a large driver line by line from the top; anchor on registration, match, probe, private state, I/O, IRQ, subsystem callbacks, and remove. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Reading a driver is how you learn how hardware actually works. A well-written driver is a story: probe finds the device, interrupts signal events, DMA moves data, and cleanup undoes everything. Learning to read drivers is learning to write them — and learning to debug them.
 
 ## Core Idea
 
-Do not read a large driver line by line from the top; anchor on registration, match, probe, private state, I/O, IRQ, subsystem callbacks, and remove.
+A driver has a structure: **probe** (find and initialize), **operations** (read/write/ioctl), **interrupt handler** (events), and **remove** (cleanup). The key is to follow the data: where does it come from, where does it go, what transforms it. The register accesses are the hardware interface; the rest is software logic.
 
-Understanding the control inversion where the Linux framework calls your callbacks quickly answers "who calls this function?" The private struct gathers hardware and software state in one place.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
+Reading a UART driver:
 
-## Small Example
-
-```text
-search order: id/of table → *_driver struct → probe → private struct → MMIO helpers → IRQ → subsystem ops → PM/remove
+```c
+static int uart_probe(struct platform_device *pdev) {
+    // 1. Map registers
+    base = devm_platform_ioremap_resource(pdev, 0);
+    // 2. Request IRQ
+    irq = platform_get_irq(pdev, 0);
+    request_irq(irq, uart_irq, 0, "uart", uart);
+    // 3. Initialize hardware
+    writel(UART_ENABLE, base + UART_CONTROL);
+    // 4. Register with subsystem
+    uart_add_one_port(&uart_driver, port);
+}
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+The story: find the device, claim its resources, initialize it, and register it with the kernel.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the driver's register accesses match the datasheet (Chapter 37).
+- **RISC-V:** the driver uses MMIO (Chapter 09) to access registers.
+- **OS:** the kernel provides the driver framework and subsystems.
+- **Linux/driver:** the driver is the code that makes a specific device work.
 
-Read register offsets and masks against the datasheet tables.
+## When It Fails
 
-### In RISC-V
-
-Underneath portable driver C, architecture-specific MMIO, barrier, and DMA implementations do the work.
-
-### Why the OS Cares
-
-Read lifecycle, context, ownership, and concurrency together.
-
-### In Linux / Driver
-
-devm, regmap, runtime PM, and subsystem helpers shape the actual code structure.
-
-## Trace It
-
-1. **Hardware:** Read register offsets and masks against the datasheet tables.
-2. **RISC-V:** Underneath portable driver C, architecture-specific MMIO, barrier, and DMA implementations do the work.
-3. **OS:** Read lifecycle, context, ownership, and concurrency together.
-4. **Linux / Driver:** devm, regmap, runtime PM, and subsystem helpers shape the actual code structure.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver is copied from a similar device and modified. The probe works, but the device does not work. The driver uses the wrong register offsets — the similar device had a different register map. The fix: read the datasheet for the actual device, not the similar one.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A driver's probe function maps registers and requests IRQ. What is the next step?
+   - A) Return success
+   - B) Initialize the hardware
+   - C) Register with the subsystem
+   - D) Both B and C
+   - Answer: D
+   - Explanation: After claiming resources, the driver initializes the hardware and registers with the subsystem.
+   > Hint: What does the kernel need from the driver? What does the driver need to do before it can be used?
 
-1. Write the match → probe → IRQ → remove path of a real platform driver, with function names.
-2. Classify private-struct fields into hardware state, kernel resources, and synchronization objects.
-3. Find five clues in real code for deciding whether a callback runs in process, IRQ, or worker context.
-4. Find one rule or API in the official documentation directly related to **Reading a Linux Driver**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are typical driver operations? Pick all that apply.
+   - A) probe
+   - B) remove
+   - C) read/write
+   - D) schedule
+   - Answer: A, B, C
+   - Explanation: probe, remove, and read/write are standard driver operations. schedule is the kernel scheduler's job.
+   > Hint: What does the kernel call when a device appears? When it disappears? When data is transferred?
+
+3. A driver is copied from a similar device. The probe works but the device does not work. What is the most likely cause?
+   - A) The driver is not compiled into the kernel
+   - B) The driver uses the wrong register offsets
+   - C) The kernel does not support device trees
+   - D) The device is not described in the device tree
+   - Answer: B
+   - Explanation: Similar devices often have different register maps. The driver works at the software level but accesses the wrong hardware registers.
+   > Hint: What is different between similar devices? What does the driver get wrong?
+
+4. Explain how to read a driver — what is the first thing you look for, and how do you follow the data?
+
+5. A driver's interrupt handler is called but the device does not work. List three possible causes and the one register read that would distinguish them.
+
+## Limits
+
+This chapter shows a simple driver. Real drivers are thousands of lines, with complex state machines and error handling. The principle — follow the data, match the datasheet — is the same.
 
 ## Go Deeper
 
+- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
 - [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Linux Driver Model](https://docs.kernel.org/driver-api/driver-model/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Do not read a large driver line by line from the top; anchor on registration, match, probe, private state, I/O, IRQ, subsystem callbacks, and remove.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 37, Chapter 39

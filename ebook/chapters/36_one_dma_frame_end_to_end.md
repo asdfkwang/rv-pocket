@@ -5,82 +5,79 @@
 
 ## Why This Matters
 
-Tracking one frame's ownership through userspace → kernel → device → kernel shows how DMA, cache, barriers, and completion meet on a real data path. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A display frame is a large block of data that must be transferred quickly and regularly. DMA (Chapter 22) makes this possible. Tracing one frame end to end shows how the CPU, driver, DMA engine, and display controller work together — and where the bottlenecks are.
 
 ## Core Idea
 
-Tracking one frame's ownership through userspace → kernel → device → kernel shows how DMA, cache, barriers, and completion meet on a real data path.
+A frame is a buffer of pixel data. The CPU (or GPU) writes the frame to memory. The driver maps the buffer for DMA and programs the display controller. The display controller reads the buffer via DMA and sends pixels to the display. An interrupt signals frame completion. The process repeats for the next frame.
 
-The control path sets up descriptors and the doorbell while the data path has the device transfer memory directly. Buffer ownership transfer is the reference point for sync and lifetime rules.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-userspace frame
-→ queue/map DMA
-→ fill descriptor
-→ barrier
-→ doorbell
-→ device DMA
-→ IRQ complete
-→ buffer returned
+1. CPU writes frame to buffer (in page cache)
+2. Driver: flush cache, map buffer for DMA
+3. Driver: program display controller with DMA address
+4. Display controller: read buffer via DMA, send pixels
+5. Display controller: raise interrupt (frame done)
+6. Driver: unmap buffer, wake waiting thread
+7. CPU: write next frame
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+Each step is a handoff. The frame travels from CPU memory to the display without the CPU copying every pixel.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the display controller is a bus master that reads memory via DMA.
+- **RISC-V:** the CPU programs the display controller via MMIO (Chapter 09).
+- **OS:** the kernel provides the DMA API and the framebuffer subsystem.
+- **Linux/driver:** the display driver manages the frame buffer and DMA transfers.
 
-The DMA engine, descriptor ring, doorbell, and completion IRQ are the data-path components.
+## When It Fails
 
-### In RISC-V
-
-Memory ordering affects the observed order of descriptor publication and the MMIO doorbell.
-
-### Why the OS Cares
-
-The OS manages buffer pinning and mapping, the IOMMU, and ownership lifetime.
-
-### In Linux / Driver
-
-The DMA API plus the queue model of the DRM/V4L2/net subsystem make up the real driver.
-
-## Trace It
-
-1. **Hardware:** The DMA engine, descriptor ring, doorbell, and completion IRQ are the data-path components.
-2. **RISC-V:** Memory ordering affects the observed order of descriptor publication and the MMIO doorbell.
-3. **OS:** The OS manages buffer pinning and mapping, the IOMMU, and ownership lifetime.
-4. **Linux / Driver:** The DMA API plus the queue model of the DRM/V4L2/net subsystem make up the real driver.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A frame is partially displayed — the top half is the new frame, the bottom half is the old frame. The driver started DMA before the CPU finished writing the frame. The fix: use double buffering — write to one buffer while DMA reads the other.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A display driver maps a frame buffer for DMA. What address does it give to the display controller?
+   - A) A kernel virtual address
+   - B) A user-space virtual address
+   - C) A DMA (bus) address
+   - D) A physical address
+   - Answer: C
+   - Explanation: The display controller uses DMA addresses. The driver maps the buffer and gets a DMA address.
+   > Hint: What address does the device understand? What does the DMA API return?
 
-1. Give one ghost-frame cause each for cache, ownership, and descriptor-index ordering.
-2. Write step by step what happens if the producer index is published before the descriptor.
-3. Investigate ownership transfer in a network RX ring or a V4L2/DRM buffer queue using real source and docs.
-4. Find one rule or API in the official documentation directly related to **One DMA Frame, End to End**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are part of the frame transfer path? Pick all that apply.
+   - A) CPU writes frame to buffer
+   - B) Driver maps buffer for DMA
+   - C) Display controller reads buffer via DMA
+   - D) Page cache schedules the transfer
+   - Answer: A, B, C
+   - Explanation: The CPU (A), driver (B), and display controller (C) are all part of the path. The page cache (D) is for storage, not display.
+   > Hint: What layers does a frame cross? What is not involved?
+
+3. A frame is partially displayed. The top half is new, the bottom half is old. What is the most likely cause?
+   - A) The display controller is broken
+   - B) DMA started before the CPU finished writing the frame
+   - C) The buffer is too small
+   - D) The interrupt is not configured
+   - Answer: B
+   - Explanation: If DMA starts before the CPU finishes writing, the display controller reads a mix of old and new data. The fix is double buffering.
+   > Hint: What is the race? When does DMA read? When does the CPU write?
+
+4. Explain why double buffering solves the partial frame problem — what are the two buffers, and how do they alternate?
+
+5. A display driver uses DMA for frame transfer. The display shows garbage. List three possible causes and the one register read that would distinguish them.
+
+## Limits
+
+This chapter shows a simple frame transfer. Real displays have multiple layers, vsync, and complex timing. The principle — CPU writes, DMA transfers, controller displays — is the same.
 
 ## Go Deeper
 
 - [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
-- [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
+- [Linux Framebuffer](https://docs.kernel.org/fb/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Tracking one frame's ownership through userspace → kernel → device → kernel shows how DMA, cache, barriers, and completion meet on a real data path.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 35, Chapter 37

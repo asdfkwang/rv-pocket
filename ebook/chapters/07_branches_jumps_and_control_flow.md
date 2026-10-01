@@ -5,77 +5,77 @@
 
 ## Why This Matters
 
-Conditionals and loops are ultimately about where to send the next PC. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Without branches, a program is a straight line. Loops, if-statements, and function calls are all the CPU deciding "where does the PC go next?" When a loop runs forever or a function never returns, the bug is in this decision.
 
 ## Core Idea
 
-Conditionals and loops are ultimately about where to send the next PC.
+Normally the PC advances by 4 (one instruction). A **branch** compares two registers and, if the condition holds, replaces the PC with a target address. A **jump** (`jal`) unconditionally changes the PC and saves the return address in a register. A loop is just a branch that goes backward.
 
-A branch changes the PC conditionally, while jal/jalr can combine a jump with saving a return address. The compiler lowers if statements, loops, and function calls into this flow.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-x5=3
-loop: addi x5,x5,-1
-bne x5,x0,loop
-→ fall-through when x5 is 0
+0x8000: addi x5, x0, 3      # x5 = 3 (counter)
+0x8004: addi x6, x6, 10     # x6 += 10 (loop body)
+0x8008: addi x5, x5, -1     # x5 -= 1
+0x800c: bne  x5, x0, 0x8004 # if x5 != 0, go back to 0x8004
+0x8010: ...                 # loop done
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+Trace: x5 starts at 3. Each pass adds 10 to x6 and decrements x5. After 3 passes x5 is 0, the branch is not taken, and execution falls through to `0x8010`. The loop ran exactly 3 times.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the branch unit compares registers and computes the target; the fetch path redirects.
+- **RISC-V:** `beq`, `bne`, `blt`, `bge` (and unsigned variants) are conditional branches; `jal` is a jump with a link register.
+- **OS:** the scheduler uses a timer interrupt (a forced PC change) to switch tasks — control flow the program never chose.
+- **Linux/driver:** `goto` in error-handling paths is the C version of a branch; understanding the assembly helps read stack traces.
 
-The branch unit and prediction logic select the next fetch address.
+## When It Fails
 
-### In RISC-V
-
-beq/bne/blt and jal/jalr create PC-relative or indirect control flow.
-
-### Why the OS Cares
-
-Trap returns and scheduler switches carry more state, but they still move the execution flow to a different point.
-
-### In Linux / Driver
-
-Understanding control flow matters when reading a kernel crash's PC, return addresses, and disassembly.
-
-## Trace It
-
-1. **Hardware:** The branch unit and prediction logic select the next fetch address.
-2. **RISC-V:** beq/bne/blt and jal/jalr create PC-relative or indirect control flow.
-3. **OS:** Trap returns and scheduler switches carry more state, but they still move the execution flow to a different point.
-4. **Linux / Driver:** Understanding control flow matters when reading a kernel crash's PC, return addresses, and disassembly.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A loop condition uses `blt` (signed less-than) but the counter is unsigned. At some large value the signed comparison says "negative" and the loop exits early or never. The fix is `bltu`. The bug is not the logic — it is the type of comparison matching the type of the data.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. At `0x800c`, `bne x5, x0, 0x8004` is executed with `x5 = 0`. What is the next PC?
+   - A) `0x8004`
+   - B) `0x8010`
+   - C) `0x800c`
+   - D) `0x0000`
+   - Answer: B
+   - Explanation: `bne` branches only if the registers differ. `x5 = 0` equals `x0`, so the branch is not taken and the PC advances to the next instruction at `0x8010`.
+   > Hint: bne = branch if NOT equal. Is x5 equal to x0?
 
-1. Given initial x5=5, count how many times the loop's addi and bne each execute.
-2. Explain with bit patterns why blt and bltu give different results when comparing -1 and 1.
-3. Design a procedure using objdump to trace the branch/call path from a single kernel PC.
-4. Find one rule or API directly related to **Branches, Jumps, and Control Flow** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are unconditional control-flow changes? Pick all that apply.
+   - A) `beq`
+   - B) `jal`
+   - C) `bne`
+   - D) `jalr`
+   - Answer: B, D
+   - Explanation: `jal` and `jalr` always change the PC. `beq` and `bne` are conditional — they only branch when their condition holds.
+   > Hint: "jal" has no condition field. What does the 'l' stand for?
+
+3. A function calls another function with `jal ra, target`. What does `ra` hold when the target starts executing?
+   - A) The address of the call instruction
+   - B) The address of the instruction after the call
+   - C) The address of the function's first instruction
+   - D) Zero
+   - Answer: B
+   - Explanation: `jal` saves PC+4 (the return address) in `ra` before jumping. The called function can return with `jalr x0, 0(ra)` to resume after the call.
+   > Hint: The caller needs to know where to resume. What address is that?
+
+4. Explain why a compiler might turn a `while` loop into a backward branch at the end rather than a forward branch at the beginning — what does this save on the common path?
+
+5. A driver's probe function has 5 error-handling `goto` labels. Trace the control flow for the case where the 3rd allocation fails: which labels run, which are skipped, and what state has been allocated at that point?
+
+## Limits
+
+This chapter shows simple branches and jumps. Real CPUs predict branches (speculative execution), and RISC-V has compressed instructions that change instruction sizes. The ISA contract — what the PC does — is exact; the machinery that implements it is not.
 
 ## Go Deeper
 
 - [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [RISC-V psABI](https://github.com/riscv-non-isa/riscv-elf-psabi-doc)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux Kernel Coding Style (goto)](https://docs.kernel.org/process/coding-style.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Conditionals and loops are ultimately about where to send the next PC.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 06, Chapter 08

@@ -5,77 +5,79 @@
 
 ## Why This Matters
 
-A Linux driver turns a physical MMIO resource into an I/O mapping and handles registers through __iomem accessors. This concept does not end at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and the Linux driver.
+Device registers are accessed through MMIO (Chapter 09). In Linux, device registers are mapped into the kernel's address space with `ioremap` and accessed with `readl`/`writel`. These functions are not plain dereferences — they handle byte ordering, barriers, and architecture-specific requirements.
 
 ## Core Idea
 
-A Linux driver turns a physical MMIO resource into an I/O mapping and handles registers through __iomem accessors.
+A driver maps device registers with `devm_platform_ioremap_resource` (which returns an `__iomem` pointer). It then reads and writes with `readl`/`writel` (or `readb`/`writeb` for 8-bit registers). These functions ensure correct access: they prevent compiler reordering, handle byte ordering, and issue any required barriers.
 
-The ioremap family and readl/writel are contracts for portability, endianness, ordering, and static checking. Replacing them with plain C pointer dereferences can cause platform-specific bugs.
+## Worked Example
 
-On the first read, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
+```c
+void __iomem *base = devm_platform_ioremap_resource(pdev, 0);
 
-## Small Example
+// Write to CONTROL register (offset 0x08)
+writel(0x01, base + 0x08);
 
-```text
-base=devm_platform_ioremap_resource(...)
-v=readl(base+CTRL)
-writel(v|ENABLE, base+CTRL)
+// Read STATUS register (offset 0x04)
+u32 status = readl(base + 0x04);
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control passes to another layer.
+The `writel` writes 4 bytes to the mapped address. The `readl` reads 4 bytes. Both are memory barriers — the compiler will not reorder them.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the device registers are at fixed offsets from the base address. The driver writes to configure and reads to check status.
+- **RISC-V:** the CPU accesses registers with normal load/store instructions. The `readl`/`writel` functions compile to these.
+- **OS:** the kernel provides the `ioremap` mechanism and the `readl`/`writel` accessors.
+- **Linux/driver:** the driver uses these functions to access device registers safely.
 
-Each accessor can produce a device bus transaction and register side effects.
+## When It Fails
 
-### In RISC-V
-
-It ultimately comes down to CPU loads and stores with architecture I/O semantics.
-
-### Why the OS Cares
-
-The kernel manages physical resource reservation, mapping lifetime, and concurrent access.
-
-### In Linux / Driver
-
-__iomem and sparse catch I/O pointer misuse, and the accessors hide architecture differences.
-
-## Trace It
-
-1. **Hardware:** Each accessor can produce a device bus transaction and register side effects.
-2. **RISC-V:** It ultimately comes down to CPU loads and stores with architecture I/O semantics.
-3. **OS:** The kernel manages physical resource reservation, mapping lifetime, and concurrent access.
-4. **Linux / Driver:** __iomem and sparse catch I/O pointer misuse, and the accessors hide architecture differences.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver dereferences an `__iomem` pointer directly (`*base = 0x01`). On some architectures, this works. On others, it fails — the compiler may reorder the write, or the byte order may be wrong. The bug is architecture-dependent and may not show up on the development machine. The fix: always use `readl`/`writel`.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. A driver has an `__iomem` pointer to a device register. How should it write to the register?
+   - A) `*base = value`
+   - B) `writel(value, base)`
+   - C) `memcpy(base, &value, 4)`
+   - D) `base[0] = value`
+   - Answer: B
+   - Explanation: `writel` is the correct accessor for `__iomem` pointers. It handles byte ordering and barriers. Direct dereference may work on some architectures but is not portable.
+   > Hint: What does `writel` do that a plain write does not?
 
-1. Find in the official documentation why plain memcpy may be wrong for MMIO.
-2. Research the ordering difference between readl and readl_relaxed.
-3. Analyze the problem when the resource size in the DT is smaller than the datasheet range.
-4. Find one rule or API directly related to **MMIO in a Real Linux Driver** in the official documentation, and explain one condition or exception that this chapter's simplified model omits.
-5. Suppose this chapter's concept causes a problem on a real Linux system. Choose the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace** and design what state to observe and which tools to use.
+2. Which of these are true about `readl`/`writel`? Pick all that apply.
+   - A) They are memory barriers
+   - B) They handle byte ordering
+   - C) They can be used on any pointer
+   - D) They prevent compiler reordering
+   - Answer: A, B, D
+   - Explanation: `readl`/`writel` are barriers (A), handle byte ordering (B), and prevent compiler reordering (D). They must only be used on `__iomem` pointers (C is false).
+   > Hint: What could go wrong with a plain write? What do these functions prevent?
+
+3. A driver uses `writel` to write to a control register. The write appears to succeed but the device does not respond. What is the most likely cause?
+   - A) The `writel` function is broken
+   - B) The driver wrote to the wrong offset
+   - C) The device is not powered
+   - D) The kernel does not support MMIO
+   - Answer: B
+   - Explanation: `writel` is reliable. The most likely cause is a wrong offset — the driver wrote to the wrong register.
+   > Hint: What does `writel` do? What could the driver get wrong?
+
+4. Explain why `readl`/`writel` exist instead of plain dereference — what architecture-specific problems do they solve?
+
+5. A driver writes to a control register with `writel` but the device does not change state. List three possible causes and the one register read that would distinguish them.
+
+## Limits
+
+This chapter shows 32-bit register access. Real devices may have 64-bit registers (`readq`/`writeq`), 8-bit registers (`readb`/`writeb`), or register sequences with side effects. Always read the device manual for the correct access width and semantics.
 
 ## Go Deeper
 
 - [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
+- [Linux MMIO](https://docs.kernel.org/driver-api/mmio.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- A Linux driver turns a physical MMIO resource into an I/O mapping and handles registers through __iomem accessors.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess unknown details; look them up in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 28, Chapter 30

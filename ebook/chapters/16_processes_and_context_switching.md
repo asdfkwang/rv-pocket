@@ -5,77 +5,80 @@
 
 ## Why This Matters
 
-A process is not an executable file; it is a bundle of live state: registers, address space, files, credentials, and scheduling state. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A computer runs many programs at once — or so it seems. The OS creates this illusion by switching between them quickly. Each program is a **process**: an address space, a set of open files, and a saved CPU state. The switch between processes is a **context switch**: save one process's state, load another's.
 
 ## Core Idea
 
-A process is not an executable file; it is a bundle of live state: registers, address space, files, credentials, and scheduling state.
+A process is the OS's representation of a running program. It has: an address space (memory), file descriptors (open files), and saved CPU state (registers, PC). The OS saves the CPU state when switching away from a process and restores it when switching back. The process never knows it was switched — the state is preserved exactly.
 
-A context switch saves the required CPU state of the current task and restores another task's state. The CPU does not know PIDs; the OS creates the process abstraction.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Two processes, A and B:
 
 ```text
-A: pc=A_pc sp=A_sp s0=A_s0
---save/load→
-B: pc=B_pc sp=B_sp s0=B_s0
+1. Process A is running
+2. Timer interrupt fires (Chapter 11)
+3. OS saves A's registers and PC to A's process control block
+4. OS loads B's registers and PC from B's process control block
+5. OS returns from the interrupt — now B is running
+6. Later, the reverse happens: B is saved, A is restored
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+The switch is transparent to both processes. Each thinks it has the CPU to itself.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the CPU provides the trap mechanism (interrupts) that triggers the switch, and the CSRs that save/restore state.
+- **RISC-V:** the privileged spec defines the CSRs (`mepc`, `mstatus`, etc.) that are saved and restored.
+- **OS:** the OS is the software that decides when to switch and performs the save/restore.
+- **Linux/driver:** drivers must be context-switch-safe. A driver that assumes it runs to completion without interruption can corrupt state if a context switch happens mid-operation.
 
-The CPU only provides registers and MMU state; it knows no process list.
+## When It Fails
 
-### In RISC-V
-
-State such as SP, saved registers, and satp connects to the architecture-specific switch.
-
-### Why the OS Cares
-
-The scheduler manages running/runnable/sleeping state and selects the next task.
-
-### In Linux / Driver
-
-The Linux task_struct and architecture switch code connect task state to CPU state.
-
-## Trace It
-
-1. **Hardware:** The CPU only provides registers and MMU state; it knows no process list.
-2. **RISC-V:** State such as SP, saved registers, and satp connects to the architecture-specific switch.
-3. **OS:** The scheduler manages running/runnable/sleeping state and selects the next task.
-4. **Linux / Driver:** The Linux task_struct and architecture switch code connect task state to CPU state.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver uses a global variable to track state across multiple register accesses. A context switch happens between accesses. Another process runs, modifies the global, and when the first process resumes, the state is wrong. The fix: use per-device state, or disable interrupts during the critical section.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. A context switch occurs. What is saved?
+   - A) Only the PC
+   - B) Only the general-purpose registers
+   - C) The PC, general-purpose registers, and OS bookkeeping state
+   - D) Nothing — the CPU saves everything automatically
+   - Answer: C
+   - Explanation: The OS saves the PC and registers to the process control block. The OS also updates its own data structures (scheduler queues, etc.). The CPU does not save general-purpose registers automatically.
+   > Hint: What does the hardware save? What must software save?
 
-1. List five examples each of process state and CPU register state.
-2. Explain why a stale TLB can be a problem when switching address spaces.
-3. Find the mm, files, and PID-related fields in the current Linux task_struct.
-4. Find one rule or API directly related to **Processes and Context Switching** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are part of a process's state? Pick all that apply.
+   - A) The program counter
+   - B) The stack pointer
+   - C) Open file descriptors
+   - D) The process's source code
+   - Answer: A, B, C
+   - Explanation: The PC, stack pointer, and file descriptors are all part of the process's runtime state. The source code is static — it does not change at runtime.
+   > Hint: What changes while a program runs? What stays the same?
+
+3. Why does a context switch make the illusion of parallelism?
+   - A) Because the CPU runs multiple instructions at once
+   - B) Because the switch is fast enough that each process seems to run continuously
+   - C) Because processes share the same memory
+   - D) Because the OS duplicates the CPU
+   - Answer: B
+   - Explanation: The switch is fast (microseconds). Each process runs for a short time, then switches. To human perception, all processes run simultaneously.
+   > Hint: How fast is a context switch? How does that compare to human perception?
+
+4. Explain why a driver must be reentrant or use locks when it can be interrupted by a context switch — what goes wrong if two executions of the driver code overlap?
+
+5. A process is switched out while holding a lock. Another process tries to acquire the same lock. What happens, and what is this situation called?
+
+## Limits
+
+This chapter shows a simple context switch. Real systems have nested interrupts, lazy state saving (only save what is used), and hardware support for address space switching (TLB, Chapter 21). The principle — save state, switch, restore — is the same.
 
 ## Go Deeper
 
 - [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
-- [RISC-V psABI](https://github.com/riscv-non-isa/riscv-elf-psabi-doc)
+- [Linux Process Management](https://docs.kernel.org/process/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- A process is not an executable file; it is a bundle of live state: registers, address space, files, credentials, and scheduling state.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 15, Chapter 17

@@ -5,77 +5,83 @@
 
 ## Why This Matters
 
-An ABI is a software contract that defines how different functions and binaries share registers and the stack. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Functions are how software reuses logic. But a function call is a contract: who passes arguments, who saves registers, who cleans up. When a function returns garbage or the stack grows until it crashes, the contract was broken — by the caller, the callee, or the compiler's assumptions.
 
 ## Core Idea
 
-An ABI is a software contract that defines how different functions and binaries share registers and the stack.
+A function call does three things: pass arguments (in registers `a0`–`a7`), save the return address (in `ra`), and jump to the function. The function may call other functions, so it must save `ra` and any registers it promises to preserve on a **stack** — a region of memory pointed to by `sp`. The **ABI** (Application Binary Interface) is the written contract for all of this.
 
-A function call needs more than a jump: rules for arguments, return values, saved registers, and stack frames. Understand the ISA and the ABI separately.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
-
-## Small Example
+Caller wants to add 3 and 4:
 
 ```text
-a0=2, a1=3
-jal ra,add_two
-add_two: add a0,a0,a1; ret
-→ a0=5
+# caller
+addi a0, x0, 3        # argument 1
+addi a1, x0, 4        # argument 2
+jal  ra, add          # call add(3, 4); ra = return address
+# a0 now holds 7
+
+# add:
+add  a0, a0, a1       # a0 = a0 + a1 = 7
+jalr x0, 0(ra)        # return to caller
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+The caller puts arguments in `a0`/`a1`, the callee returns the result in `a0`. Neither side needs to know the other's internals — the ABI makes them compatible.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the stack is just memory; `sp` is a register pointing to the top. Push = decrement `sp` then store; pop = load then increment `sp`.
+- **RISC-V:** the ABI defines which registers are caller-saved (`t0`–`t6`, `a0`–`a7`) and callee-saved (`s0`–`s11`, `ra`, `sp`). The hardware enforces none of this — it is a software convention.
+- **OS:** each thread gets its own stack. A stack overflow is the stack growing into unmapped memory — the OS faults and kills the process.
+- **Linux/driver:** kernel functions follow the same ABI but with additional rules (no floating point in kernel, limited stack size). Violating these causes subtle corruption.
 
-The CPU has no notion of functions; it provides only jumps, registers, and memory.
+## When It Fails
 
-### In RISC-V
-
-The psABI defines the roles and save rules for ra, sp, a0-a7, s*, and t*.
-
-### Why the OS Cares
-
-Traps and syscalls change privilege state on top of a normal function call, but share the same register-saving problem.
-
-### In Linux / Driver
-
-The Linux kernel stack and architecture entry code are areas where ABI and saved-state understanding is required.
-
-## Trace It
-
-1. **Hardware:** The CPU has no notion of functions; it provides only jumps, registers, and memory.
-2. **RISC-V:** The psABI defines the roles and save rules for ra, sp, a0-a7, s*, and t*.
-3. **OS:** Traps and syscalls change privilege state on top of a normal function call, but share the same register-saving problem.
-4. **Linux / Driver:** The Linux kernel stack and architecture entry code are areas where ABI and saved-state understanding is required.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A function saves `ra` on the stack, calls another function (which overwrites `ra`), then returns using the saved value — but the saved value was never restored after the inner call. The return goes to the wrong address. The bug is not the call; it is the missing restore. The ABI says callee-saved registers must be preserved — the function broke its promise.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. A function is called with arguments in `a0` and `a1`. Where should the caller expect the return value?
+   - A) `a0`
+   - B) `ra`
+   - C) `sp`
+   - D) `t0`
+   - Answer: A
+   - Explanation: The ABI defines `a0`–`a7` as argument registers and `a0` as the primary return value register. `ra` holds the return address, not the result.
+   > Hint: Arguments go in a0–a7. Which one doubles as the return value?
 
-1. Find the caller-saved and callee-saved register lists in the psABI and explain why each group is needed.
-2. Give an example of the conditions under which a leaf function can run without a stack frame.
-3. Research how a build that omits the frame pointer can make stack traces harder.
-4. Find one rule or API directly related to **Functions, ABI, and the Stack** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which registers must a function preserve (restore before returning) if it uses them? Pick all that apply.
+   - A) `t0`
+   - B) `s0`
+   - C) `a0`
+   - D) `ra`
+   - Answer: B, D
+   - Explanation: `s0`–`s11` and `ra` are callee-saved — the function must restore them. `t0` and `a0` are caller-saved — the caller must save them if it cares.
+   > Hint: "Callee-saved" means the function (callee) promises to restore. Which registers carry that promise?
+
+3. A function's stack frame is 32 bytes. It saves `ra` and `s0` on the stack. How many bytes does it allocate, and in what order?
+   - A) 32 bytes; `ra` at offset 0, `s0` at offset 4
+   - B) 32 bytes; `s0` at offset 0, `ra` at offset 4
+   - C) 8 bytes; `ra` then `s0`
+   - D) 64 bytes; `ra` and `s0` at the top
+   - Answer: A
+   - Explanation: The frame is 32 bytes (the allocated size). `ra` is saved first (at the lower address, offset 0), then `s0` (offset 4). The order is a convention; the size is what was allocated.
+   > Hint: The frame size is given. How many registers are saved, and how big is each?
+
+4. Explain why the kernel cannot use the same stack size as a user program — what is the kernel stack size on Linux, and what happens if a kernel function recurses too deeply?
+
+5. A function returns a struct by value. The caller allocates space for the struct and passes a pointer in `a0`. The callee writes the struct to that pointer and returns the pointer in `a0`. Explain why this works even though `a0` was an argument — who owns the struct's memory?
+
+## Limits
+
+This chapter shows the simplest case: arguments in registers, a simple stack frame. Real functions may pass arguments on the stack (more than 8), return structs by hidden pointer, or use frame pointers for debugging. The ABI is a contract, not a law of nature — but breaking it breaks interoperability.
 
 ## Go Deeper
 
 - [RISC-V psABI](https://github.com/riscv-non-isa/riscv-elf-psabi-doc)
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux Kernel Coding Style](https://docs.kernel.org/process/coding-style.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- An ABI is a software contract that defines how different functions and binaries share registers and the stack.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 07, Chapter 09

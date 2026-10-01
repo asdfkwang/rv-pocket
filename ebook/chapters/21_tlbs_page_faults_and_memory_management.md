@@ -1,82 +1,82 @@
-# Chapter 21 — TLBs, Page Faults, and Memory Management
+# Chapter 21 — TLBs and Page Faults
 
 > **Part V — Memory Becomes Virtual**  
 > **Rule:** Easy to read. Hard to solve. Deep when you want it.
 
 ## Why This Matters
 
-The TLB caches page-table translations, and page faults let the OS prepare memory lazily or handle protection violations. This concept does not end at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and the Linux driver.
+Every virtual memory access requires a page table walk — multiple memory reads just to find the physical address. The **TLB** (Translation Lookaside Buffer) is a cache of recent translations. Without it, virtual memory would be too slow. A **page fault** is when the translation is not in the TLB or the page is not mapped — the OS must intervene.
 
 ## Core Idea
 
-The TLB caches page-table translations, and page faults let the OS prepare memory lazily or handle protection violations.
+The TLB caches virtual-to-physical translations. On a memory access, the MMU checks the TLB first. If the translation is there (a **TLB hit**), the physical address is returned immediately. If not (a **TLB miss**), the MMU walks the page table. If the page table has the mapping, the translation is added to the TLB. If the page table does not have the mapping, the CPU raises a **page fault**.
 
-A page fault is not always a crash. Demand paging and copy-on-write use faults as a normal control path, and stale TLBs must be handled after page-table changes.
-
-On the first read, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-parent/child share RO page after fork
-child write → page fault
-→ private copy
-→ PTE update
-→ retry succeeds
+CPU accesses virtual address 0x12345000
+  → TLB miss (not cached)
+  → MMU walks page tables (3 reads for Sv39)
+  → mapping found: virtual 0x12345000 → physical 0xABCDE000
+  → translation added to TLB
+  → physical address 0xABCDE000 returned to CPU
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control passes to another layer.
+Next access to 0x12345000 is a TLB hit — no walk needed.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the TLB is a small, fast cache inside the MMU. It is fully associative or set-associative.
+- **RISC-V:** the privileged spec defines `sfence.vma` to flush TLB entries when page tables change.
+- **OS:** the OS manages the TLB indirectly — it flushes entries when changing mappings, and uses ASIDs to avoid flushes on context switches.
+- **Linux/driver:** drivers do not manage the TLB directly. But they must be aware that DMA mappings (Chapter 22) may have different TLB behavior than CPU mappings.
 
-The TLB holds recent translations, and on multicore systems each CPU can hold stale entries.
+## When It Fails
 
-### In RISC-V
-
-SFENCE.VMA provides the ordering and invalidation needed between changes to translation data structures and subsequent translations.
-
-### Why the OS Cares
-
-The OS implements demand paging, COW, mapped files, and fault policy.
-
-### In Linux / Driver
-
-The Linux fault handler examines VMA and PTE state to handle allocation, COW, and file-backed faults.
-
-## Trace It
-
-1. **Hardware:** The TLB holds recent translations, and on multicore systems each CPU can hold stale entries.
-2. **RISC-V:** SFENCE.VMA provides the ordering and invalidation needed between changes to translation data structures and subsequent translations.
-3. **OS:** The OS implements demand paging, COW, mapped files, and fault policy.
-4. **Linux / Driver:** The Linux fault handler examines VMA and PTE state to handle allocation, COW, and file-backed faults.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+The OS updates a page table but forgets to flush the TLB. The CPU continues using the old translation. The process sees stale data or crashes. The fix: always execute `sfence.vma` after changing page tables. This is a common bug in OS porting.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. A TLB miss occurs. What does the MMU do?
+   - A) Return a random physical address
+   - B) Walk the page table to find the translation
+   - C) Raise a page fault immediately
+   - D) Ignore the access
+   - Answer: B
+   - Explanation: A TLB miss means the translation is not cached. The MMU walks the page table to find it. A page fault occurs only if the page table also lacks the mapping.
+   > Hint: What is the TLB? What happens when it does not have the answer?
 
-1. Give an example of a correctness or security problem caused by a missing TLB invalidation after a page-table update.
-2. Research the difference between major and minor page faults from the Linux perspective.
-3. Explain why multicore TLB shootdown is tied to IPIs.
-4. Find one rule or API directly related to **TLBs, Page Faults, and Memory Management** in the official documentation, and explain one condition or exception that this chapter's simplified model omits.
-5. Suppose this chapter's concept causes a problem on a real Linux system. Choose the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace** and design what state to observe and which tools to use.
+2. Which of these are true about page faults? Pick all that apply.
+   - A) A page fault means the page is not in physical memory
+   - B) A page fault means the virtual address is not mapped
+   - C) The OS handles page faults
+   - D) A page fault always kills the process
+   - Answer: B, C
+   - Explanation: A page fault means the mapping is not in the page table (B). The OS handler decides what to do (C). A is false — the page may be in physical memory but not mapped. D is false — the OS may map the page and resume.
+   > Hint: What does the OS do when a page fault occurs? Does it always kill the process?
+
+3. The OS updates a page table. What must it do before the CPU uses the new mapping?
+   - A) Nothing — the CPU sees the change immediately
+   - B) Flush the TLB (sfence.vma)
+   - C) Reboot the CPU
+   - D) Invalidate the cache
+   - Answer: B
+   - Explanation: The TLB caches old translations. Without a flush, the CPU may use the stale mapping. `sfence.vma` invalidates TLB entries.
+   > Hint: What caches translations? What happens if that cache is not updated?
+
+4. Explain the difference between a TLB miss and a page fault — what causes each, and what happens in each case?
+
+5. A process accesses a valid virtual address but gets a page fault. The OS handler finds the page is mapped but the TLB entry is stale. What instruction should the OS have executed, and what is the symptom of forgetting it?
+
+## Limits
+
+This chapter shows a simple TLB. Real TLBs have multiple levels, support huge pages, and may be shared between cores. The principle — cache translations, flush on change — is universal.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
+- [RISC-V Privileged Architecture (TLB)](https://docs.riscv.org/reference/isa/priv/priv-index.html)
+- [Linux Memory Management (Page Faults)](https://docs.kernel.org/mm/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- The TLB caches page-table translations, and page faults let the OS prepare memory lazily or handle protection violations.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess unknown details; look them up in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 20, Chapter 22

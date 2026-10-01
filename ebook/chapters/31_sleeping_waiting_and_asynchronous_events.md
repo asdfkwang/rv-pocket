@@ -5,80 +5,82 @@
 
 ## Why This Matters
 
-Instead of holding a waiting task on the CPU with polling, the OS puts it to sleep and makes it runnable again when the event arrives. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A driver often needs to wait for something: a device to be ready, a transfer to complete, a buffer to be available. **Sleeping** lets the driver wait without burning CPU. **Asynchronous events** let the device notify the driver when something happens. Getting the wait wrong causes deadlocks, lost wakeups, and system hangs.
 
 ## Core Idea
 
-Instead of holding a waiting task on the CPU with polling, the OS puts it to sleep and makes it runnable again when the event arrives.
+A driver waits with `wait_event_interruptible` (sleeps until a condition is true) or `completion` (sleeps until another thread signals). The device signals completion with an interrupt. The driver's interrupt handler wakes the waiting thread. The key rule: the condition must be checked before sleeping, and the wakeup must happen after the condition is set.
 
-Wait queues, completions, workqueues, and threaded IRQs each provide different async semantics and execution contexts. A wakeup does not run the task immediately; it is a state change that lets the scheduler pick the task again.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
+```c
+DECLARE_WAIT_QUEUE_HEAD(wq);
+int data_ready = 0;
 
-## Small Example
+// Thread A: wait for data
+wait_event_interruptible(wq, data_ready);
+// process data...
 
-```text
-read() no data
-→ wait queue / TASK_SLEEPING
-→ IRQ puts data
-→ wake_up
-→ TASK_RUNNABLE
-→ later scheduled
+// Interrupt handler: wake the thread
+data_ready = 1;
+wake_up_interruptible(&wq);
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+Thread A sleeps until `data_ready` is set. The interrupt handler sets it and wakes the thread. The order matters: set the condition, then wake.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the device raises an interrupt when data is ready. The interrupt handler runs.
+- **RISC-V:** the CPU takes the interrupt and jumps to the handler (Chapter 12).
+- **OS:** the kernel provides wait queues, completions, and the scheduler that sleeps and wakes threads.
+- **Linux/driver:** the driver uses these primitives to wait for device events.
 
-An interrupt can serve as the physical trigger for an asynchronous event.
+## When It Fails
 
-### In RISC-V
-
-Trap entry hands a hardware event to a software handler, but sleep/wakeup policy is an OS concern outside the ISA.
-
-### Why the OS Cares
-
-The scheduler takes a blocked task off the CPU and makes it runnable again after the wake event.
-
-### In Linux / Driver
-
-Linux completions and workqueues help move execution between IRQ, worker, and process contexts.
-
-## Trace It
-
-1. **Hardware:** An interrupt can serve as the physical trigger for an asynchronous event.
-2. **RISC-V:** Trap entry hands a hardware event to a software handler, but sleep/wakeup policy is an OS concern outside the ISA.
-3. **OS:** The scheduler takes a blocked task off the CPU and makes it runnable again after the wake event.
-4. **Linux / Driver:** Linux completions and workqueues help move execution between IRQ, worker, and process contexts.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver checks a condition, finds it false, and sleeps. But the interrupt fires between the check and the sleep. The wakeup is lost. The driver sleeps forever. The fix: use a wait queue that handles this race — the kernel rechecks the condition after the thread is queued but before it sleeps.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A driver calls `wait_event_interruptible(wq, condition)`. What happens if the condition is already true?
+   - A) The thread sleeps anyway
+   - B) The thread does not sleep and continues immediately
+   - C) The thread sleeps for a fixed time
+   - D) The thread crashes
+   - Answer: B
+   - Explanation: `wait_event_interruptible` checks the condition first. If it is true, the thread does not sleep.
+   > Hint: What does the function check before sleeping?
 
-1. Find in the official documentation why wait_for_completion must not be called from hard IRQ context.
-2. Explain why a task does not run immediately after a wakeup.
-3. Give one example driver job well suited to a workqueue and one well suited to a threaded IRQ.
-4. Find one rule or API in the official documentation directly related to **Sleeping, Waiting, and Asynchronous Events**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about sleeping in a driver? Pick all that apply.
+   - A) Sleeping allows the CPU to run other threads
+   - B) Sleeping is legal in interrupt context
+   - C) Sleeping is legal in process context
+   - D) Sleeping wastes CPU cycles
+   - Answer: A, C
+   - Explanation: Sleeping lets the CPU run other threads (A) and is legal in process context (C). It is illegal in interrupt context (B is false). Sleeping does not waste CPU (D is false).
+   > Hint: What context can sleep? What happens to the CPU when a thread sleeps?
+
+3. A driver waits for a condition but the wakeup is lost. What is the most likely cause?
+   - A) The condition was set before the thread started waiting
+   - B) The interrupt handler did not call wakeup
+   - C) The thread checked the condition, found it false, and slept — but the wakeup happened between the check and the sleep
+   - D) The kernel does not support wait queues
+   - Answer: C
+   - Explanation: The race between checking the condition and sleeping can lose a wakeup. The fix is to use a wait queue that handles this race.
+   > Hint: What is the window between checking and sleeping? What can happen in that window?
+
+4. Explain the difference between a wait queue and a completion — when would you use each?
+
+5. A driver waits for a DMA transfer to complete. The transfer never completes. List three possible causes and the one register read that would distinguish them.
+
+## Limits
+
+This chapter shows basic waiting. Real drivers use timeouts, poll, and select for multiple event sources. The principle — check condition, sleep, wake on event — is the same.
 
 ## Go Deeper
 
-- [Linux Completions](https://docs.kernel.org/scheduler/completion.html)
-- [Linux Workqueues](https://docs.kernel.org/core-api/workqueue.html)
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Generic IRQ](https://docs.kernel.org/core-api/genericirq.html)
+- [Linux Driver API (waiting)](https://docs.kernel.org/driver-api/basics.html)
+- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Instead of holding a waiting task on the CPU with polling, the OS puts it to sleep and makes it runnable again when the event arrives.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 30, Chapter 32

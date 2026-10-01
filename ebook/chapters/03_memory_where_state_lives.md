@@ -5,60 +5,77 @@
 
 ## Why This Matters
 
-Memory is state storage with an address on every byte, and loads/stores move that state. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Every variable, every pixel, every queued byte sits at some address as some bytes. When a screen shows wrong colors or a driver reads garbage, the bytes are almost always fine — they are just being read with the wrong size, order, or address.
 
 ## Core Idea
 
-Memory is state storage with an address on every byte, and loads/stores move that state.
+Memory is a row of bytes, each with its own address. Loads and stores move bytes between memory and registers. Three things decide what value you actually get: **which address**, **how many bytes** (width), and **in which order** (endianness: little-endian stores the small end first).
 
-Once you understand endianness, access width, and alignment, you can see why the same bytes appear as different register values. MMIO and DMA later also come back to moving addresses and data.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
-
-## Small Example
+Four bytes in memory:
 
 ```text
-0x1000:78  0x1001:56  0x1002:34  0x1003:12
-little-endian lw @0x1000 → 0x12345678
+0x1000: 0x78   0x1001: 0x56   0x1002: 0x34   0x1003: 0x12
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+Read them back different ways (little-endian machine):
 
-## Follow the System
+```text
+lbu @0x1002        → 0x34            (one byte, zero-extended)
+lw  @0x1000        → 0x12345678     (four bytes, small end first)
+lb  @0x1000        → 0x78            (0x78 is positive, sign bit 0)
+```
 
-### At the Hardware
+Same four bytes, three different answers — all correct, because each read asked a different question.
 
-The memory controller and caches handle physical data access.
+## The Same Idea Elsewhere
 
-### In RISC-V
+- **Hardware:** the memory controller serves physical bytes; caches (Chapter 19) may serve an older copy of them.
+- **RISC-V:** `lb/lbu/lh/lhu/lw/lwu/ld` name the width; the `u` versions zero-extend, the plain ones sign-extend.
+- **OS:** the OS hands out memory in page-sized chunks and builds each process its own address space (Chapter 20).
+- **Linux/driver:** kernel pointers, userspace pointers, DMA addresses, and `__iomem` pointers all *look* like addresses but must never be mixed — each may only be used with its own access functions.
 
-lb/lbu/lh/lhu/lw/lwu/ld determine the access size and sign extension.
+## When It Fails
 
-### Why the OS Cares
-
-The OS manages memory in page units and builds a per-process virtual address space.
-
-### In Linux / Driver
-
-Kernel pointers, userspace pointers, dma_addr_t values, and __iomem pointers all look like addresses but must not be used the same way.
-
-## Trace It
-
-1. **Hardware:** The memory controller and caches handle physical data access.
-2. **RISC-V:** lb/lbu/lh/lhu/lw/lwu/ld determine the access size and sign extension.
-3. **OS:** The OS manages memory in page units and builds a per-process virtual address space.
-4. **Linux / Driver:** Kernel pointers, userspace pointers, dma_addr_t values, and __iomem pointers all look like addresses but must not be used the same way.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A framebuffer shows red and blue swapped. The bytes in RAM are exactly what the artist drew. The bug: software writes pixels as `0xRRGGBB` but the display reads little-endian words, so the first byte on screen is `BB`, not `RR`. Nobody corrupted anything — writer and reader disagreed about order.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. Memory holds `0x1000: 78 56 34 12` (little-endian). What does `lw @0x1000` return?
+   - A) `0x12345678`
+   - B) `0x78563412`
+   - C) `0x78`
+   - D) `0x12`
+   - Answer: A
+   - Explanation: Little-endian puts the small end first: byte 0x78 is the lowest 8 bits, so the word reads `0x12345678`. B is the big-endian reading; C and D read single bytes.
+   > Hint: The byte at the lowest address becomes the lowest digits of the word.
 
-1. Compute the RV64 register result when byte 0xF0 is read with lb versus lbu.
-2. Research why ignoring alignment in driver register accesses is dangerous even on a CPU that allows unaligned lw.
-3. Find in the Linux Device I/O documentation why an __iomem pointer must not be dereferenced like normal RAM.
-4. Find one rule or API directly related to **Memory: Where State Lives** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. About the same four bytes, which statements are true? Pick all that apply.
+   - A) `lbu @0x1002` returns `0x34`
+   - B) `lb @0x1000` returns `0x78`
+   - C) `0x1001` is an odd address, so a word read starting there is unaligned
+   - D) Reading one byte at a time and combining them by hand always gives the same result as `lw`, regardless of endianness
+   - Answer: A, B, C
+   - Explanation: A reads the single byte `0x34`. B: `0x78` has sign bit 0, so sign-extension leaves `0x78`. C is a plain fact about the address (`0x1001` is odd). D is false — hand-combining must follow the machine's byte order, or it reconstructs the wrong word.
+   > Hint: For D, try it: does "first byte read × 16777216" assume big end or little end?
+
+3. Byte `0xF0` is read once with `lb` and once with `lbu` on RV64. What comes back each time?
+   - A) `lb` → `0xFFFFFFFFFFFFFFF0`, `lbu` → `0xF0`
+   - B) `lb` → `0xF0`, `lbu` → `0xF0`
+   - C) `lb` → `0x10`, `lbu` → `0xF0`
+   - D) Both trap on a negative byte
+   - Answer: A
+   - Explanation: `0xF0` has its top bit set, so it is negative as a signed byte (−16). `lb` sign-extends the 1-bits all the way up; `lbu` pads with zeros. No trap — reading a byte is always legal.
+   > Hint: Top bit 1 means negative. Sign extension copies that 1 leftwards, all the way.
+
+4. Look up the Linux Device I/O documentation and explain in your own words why an `__iomem` pointer must never be dereferenced like normal RAM — what could actually go wrong on real hardware?
+
+5. A test pattern of red-green-blue squares shows up blue-green-red. The RAM contents match the artist's file byte for byte. Write down the two most likely causes and, for each, the single read that would confirm or kill it.
+
+## Limits
+
+This chapter pretends every address behaves like RAM. Device registers can have side effects on read (clear-on-read status bits), and some addresses forbid some widths. Caches add a second copy of the truth (Chapter 19), and virtual memory renames every address (Chapter 20).
 
 ## Go Deeper
 
@@ -66,14 +83,6 @@ Kernel pointers, userspace pointers, dma_addr_t values, and __iomem pointers all
 - [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
 - [Linux Memory Management](https://docs.kernel.org/mm/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Memory is state storage with an address on every byte, and loads/stores move that state.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 02, Chapter 04

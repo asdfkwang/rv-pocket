@@ -5,61 +5,69 @@
 
 ## Why This Matters
 
-MMIO places device registers in the address space so CPU loads and stores can control devices. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+The CPU has one address bus. RAM, UART, GPIO, and every other device all hang off it. The CPU says "read address 0x10000000" — something must decide whether that means RAM or a device register. That decision is address decoding, and getting it wrong means the CPU talks to the wrong hardware.
 
 ## Core Idea
 
-MMIO places device registers in the address space so CPU loads and stores can control devices.
+The address space is divided into ranges. A range of addresses belongs to RAM; another range belongs to a device. The **interconnect** (the wiring between CPU and devices) decodes each address and routes the access to the right destination. This is called **Memory-Mapped I/O** (MMIO): device registers appear as addresses.
 
-The CPU issues the same loads and stores, but the interconnect's address decoder picks the destination among RAM, UART, and GPIO. The OS manages this memory map as resources.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-0x80000000.. = RAM
-0x10000000..0x10000fff = UART
-store 0x41 → 0x10000000 → UART DATA
+0x00000000..0x7FFFFFFF  → RAM (2 GB)
+0x10000000..0x10000FFF  → UART (4 KB)
+0x10001000..0x10001FFF  → GPIO (4 KB)
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+When the CPU executes `lw x12, 0x10000000`, the interconnect sees the address is in the UART range and routes the read to the UART's DATA register. The CPU used a normal load instruction — the routing is invisible to software.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the address decoder is combinational logic: compare the address bits against the range, assert the chip select for the matching device.
+- **RISC-V:** the ISA says nothing about MMIO — it is a platform decision. The RISC-V privileged spec defines how to configure the memory map.
+- **OS:** the OS owns the memory map. It programs the decoder (via firmware or platform registers) and decides which ranges are RAM and which are devices.
+- **Linux/driver:** a driver receives a resource address (from Device Tree or ACPI) and maps it into the kernel's address space with `ioremap` before accessing it.
 
-The interconnect and address decoder select the physical target.
+## When It Fails
 
-### In RISC-V
-
-RISC-V loads and stores are the starting point of an MMIO transaction and must follow ordering rules.
-
-### Why the OS Cares
-
-The OS manages ownership and mapping of physical MMIO ranges.
-
-### In Linux / Driver
-
-Device Tree reg properties or PCI BARs provide the resource, and the driver maps it as __iomem.
-
-## Trace It
-
-1. **Hardware:** The interconnect and address decoder select the physical target.
-2. **RISC-V:** RISC-V loads and stores are the starting point of an MMIO transaction and must follow ordering rules.
-3. **OS:** The OS manages ownership and mapping of physical MMIO ranges.
-4. **Linux / Driver:** Device Tree reg properties or PCI BARs provide the resource, and the driver maps it as __iomem.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver hard-codes `0x10000000` as the UART base. It works on the development board. On the next board revision the UART moved to `0x20000000` and the driver reads garbage — or worse, writes to an unrelated device. The address was never a constant; it was a property of the platform that should have been described externally.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. The CPU executes `sw x12, 0x10000004`. The memory map says `0x10000000..0x10000FFF` is UART. What happens?
+   - A) The write goes to RAM at offset 4
+   - B) The write goes to the UART register at offset 4
+   - C) The write is ignored because devices cannot be written
+   - D) The CPU traps because the address is invalid
+   - Answer: B
+   - Explanation: The address falls in the UART range, so the interconnect routes it to the UART. Offset 4 within that range selects a specific register.
+   > Hint: The address is in the UART range. What does the offset select?
 
-1. Compute the register address for UART base 0x10000000 plus offset 0x104.
-2. Explain why the same kernel breaks on a different board when it uses hard-coded MMIO addresses.
-3. Research and draw the path from a DT reg property to devm_platform_ioremap_resource.
-4. Find one rule or API directly related to **How Devices Become Addresses** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about MMIO? Pick all that apply.
+   - A) Device registers appear as addresses in the CPU's address space
+   - B) The CPU uses special instructions to access devices
+   - C) The interconnect routes accesses based on the address
+   - D) Each device occupies a range of addresses
+   - Answer: A, C, D
+   - Explanation: MMIO means normal load/store instructions access devices — no special instructions. The interconnect decodes the address and routes to the right device.
+   > Hint: "Memory-mapped" means devices look like memory. What does the CPU use to access them?
+
+3. A platform has RAM at `0x00000000..0x3FFFFFFF` and a device at `0x40000000..0x4000FFFF`. What is the minimum number of address bits the decoder must examine to distinguish them?
+   - A) 1 bit (bit 30)
+   - B) 2 bits (bits 31:30)
+   - C) 4 bits (bits 31:28)
+   - D) 32 bits (the full address)
+   - Answer: B
+   - Explanation: RAM is `00...` and the device is `01...` in the top two bits. Bits 31:30 are `00` for RAM and `01` for the device — 2 bits suffice.
+   > Hint: Write the start addresses in binary. Where do they first differ?
+
+4. Explain why a driver must call `ioremap` before accessing a device register on Linux — what does `ioremap` do, and what happens if you access the physical address directly?
+
+5. A board has two UARTs. UART0 is at `0x10000000` and UART1 is at `0x10001000`. A driver writes to `0x10001004` expecting to reach UART1's STATUS register. It reads back UART0's STATUS instead. What is the most likely cause, and how would you confirm it?
+
+## Limits
+
+This chapter assumes a simple memory map with fixed ranges. Real systems have PCIe devices that configure their own addresses at boot, IOMMUs that translate device addresses, and multiple levels of interconnects. The principle — address ranges select devices — is the same.
 
 ## Go Deeper
 
@@ -67,14 +75,6 @@ Device Tree reg properties or PCI BARs provide the resource, and the driver maps
 - [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
 - [Linux Driver Model](https://docs.kernel.org/driver-api/driver-model/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- MMIO places device registers in the address space so CPU loads and stores can control devices.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 08, Chapter 10

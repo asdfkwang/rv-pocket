@@ -5,79 +5,79 @@
 
 ## Why This Matters
 
-An interrupt is the path by which a device reports an asynchronous event so the CPU does not have to keep polling. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Polling (Chapter 11) wastes CPU. Interrupts let the hardware say "I need attention" and the CPU respond only when something happens. Without interrupts, there is no multitasking, no responsive input, and no efficient I/O. Every keystroke, every network packet, every timer tick arrives as an interrupt.
 
 ## Core Idea
 
-An interrupt is the path by which a device reports an asynchronous event so the CPU does not have to keep polling.
+An **interrupt** is a signal from hardware that causes the CPU to stop the current program, save its state, and jump to an **interrupt handler**. The handler services the device, then returns to the interrupted program. The CPU has an **interrupt enable** bit — when set, interrupts are delivered; when clear, they are pending but not delivered.
 
-A hardware IRQ signal changes CPU control flow through the RISC-V trap mechanism and reaches a driver handler via the Linux generic IRQ layer.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+A UART receives a byte:
 
 ```text
-button press
-→ GPIO STATUS set
-→ IRQ
-→ RISC-V trap
-→ Linux generic IRQ
-→ driver ISR
+1. UART sets its RX-ready bit and asserts its interrupt line
+2. Interrupt controller forwards the UART's interrupt to the CPU
+3. CPU finishes the current instruction, saves PC and status, jumps to handler
+4. Handler reads the UART DATA register (clearing the interrupt)
+5. Handler restores saved state, returns to the interrupted program
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+The interrupted program never knew it was interrupted — the CPU saved and restored everything.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the interrupt controller prioritizes and routes interrupt lines to the CPU. Each device has an interrupt line (or shares one).
+- **RISC-V:** the privileged spec defines interrupt enable (`mie`), pending (`mip`), and the trap mechanism. Interrupts are a type of trap (Chapter 13).
+- **OS:** the OS installs interrupt handlers at boot. The handler is the bridge between hardware events and OS logic (scheduler, I/O completion).
+- **Linux/driver:** a driver requests an interrupt with `request_irq` and provides a handler function. The handler runs in interrupt context — it cannot sleep.
 
-An interrupt controller can mask, route, and prioritize multiple sources.
+## When It Fails
 
-### In RISC-V
-
-Cause, EPC, the trap vector, and enable state describe an interrupt trap.
-
-### Why the OS Cares
-
-An OS separates interrupt context from process context and defers heavy work.
-
-### In Linux / Driver
-
-request_irq/request_threaded_irq and the generic IRQ layer abstract away controller differences.
-
-## Trace It
-
-1. **Hardware:** An interrupt controller can mask, route, and prioritize multiple sources.
-2. **RISC-V:** Cause, EPC, the trap vector, and enable state describe an interrupt trap.
-3. **OS:** An OS separates interrupt context from process context and defers heavy work.
-4. **Linux / Driver:** request_irq/request_threaded_irq and the generic IRQ layer abstract away controller differences.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver's interrupt handler calls a function that sleeps (like `kmalloc` with `GFP_KERNEL`). The handler runs in interrupt context, where sleeping is illegal. The kernel detects this and panics or deadlocks. The fix: use `GFP_ATOMIC` for allocations in interrupt context, or defer work to a workqueue.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. A UART asserts its interrupt line. What does the CPU do first?
+   - A) Jump immediately to the interrupt handler
+   - B) Finish the current instruction, then jump to the handler
+   - C) Ignore the interrupt if interrupts are disabled
+   - D) Both B and C
+   - Answer: D
+   - Explanation: The CPU finishes the current instruction before taking the interrupt (B). If interrupts are disabled, the interrupt is pending but not delivered (C). Both are true.
+   > Hint: When can the CPU not take an interrupt? What does it do with the pending interrupt?
 
-1. Explain what happens if you return without clearing a level-triggered IRQ source.
-2. Find in the official specification how RISC-V cause distinguishes interrupts from exceptions.
-3. Compare request_irq with request_threaded_irq and give an example of work to hand off to thread_fn.
-4. Find one rule or API directly related to **Interrupts: Hardware Wants Attention** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about interrupt handlers? Pick all that apply.
+   - A) They run in a special context where sleeping is not allowed
+   - B) They must be short and fast
+   - C) They can access user-space memory directly
+   - D) They should defer long work to a workqueue or tasklet
+   - Answer: A, B, D
+   - Explanation: Interrupt handlers run in atomic context — no sleeping, no user-space access. Long work is deferred. C is false — user-space access requires a different context.
+   > Hint: What can interrupt context not do? What should it do with long tasks?
+
+3. Two devices share the same interrupt line. The handler is invoked. How does it know which device interrupted?
+   - A) It cannot — each device must have its own line
+   - B) It reads a status register from each device on that line
+   - C) The interrupt controller tells it which device
+   - D) It asks the OS which device interrupted
+   - Answer: B
+   - Explanation: Shared interrupt lines require the handler to poll each device's status register to find which one asserted the interrupt. This is why shared lines are discouraged.
+   > Hint: If two devices share a line, the handler sees the line asserted. How does it find the source?
+
+4. Explain why interrupt handlers should be short — what happens to other interrupts and system responsiveness if a handler runs for too long?
+
+5. A driver requests an interrupt but the handler is never called. List three possible causes and the one register read that would distinguish them.
+
+## Limits
+
+This chapter shows a single interrupt line per device. Real systems have interrupt controllers with priority, masking, and MSI (Message Signaled Interrupts) for PCIe. Interrupt coalescing (batching multiple events into one interrupt) is common in high-performance devices.
 
 ## Go Deeper
 
 - [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Linux Generic IRQ](https://docs.kernel.org/core-api/genericirq.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
+- [Linux Driver API (interrupts)](https://docs.kernel.org/driver-api/interrupts.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- An interrupt is the path by which a device reports an asynchronous event so the CPU does not have to keep polling.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 11, Chapter 13

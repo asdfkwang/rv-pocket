@@ -5,75 +5,88 @@
 
 ## Why This Matters
 
-Polling is simple waiting that repeatedly checks device state, and timers and timeouts make that waiting safe. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Software often needs to wait: wait for a device to be ready, wait for a byte to arrive, wait for a timeout. The simplest way is **polling** — repeatedly reading a status register until the condition holds. Polling works but wastes CPU. The alternative is a **timer** that lets software sleep or measure intervals.
 
 ## Core Idea
 
-Polling is simple waiting that repeatedly checks device state, and timers and timeouts make that waiting safe.
+A timer is a hardware counter that increments at a known rate (e.g., every microsecond). Software reads the counter to measure elapsed time, or writes a compare value to trigger an interrupt when the counter reaches it. Polling is a loop: read status, check condition, repeat. A delay loop is polling with a counter.
 
-Polling is convenient for short boot-time waits, but long polling wastes CPU and can become an infinite loop on hardware failure. An OS extends timers into sleep and scheduling.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Poll until TX ready:
 
 ```text
-while (!(STATUS & READY)) { if (elapsed>10ms) timeout; }
-write DATA after READY
+loop:
+  lw   t0, STATUS(x10)     # read status
+  andi t0, t0, 0x01        # mask bit 0 (TX ready)
+  beq  t0, x0, loop        # if not ready, loop
+  # TX is ready, write data
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+Timer-based delay (1 million cycles):
 
-## Follow the System
+```text
+  li   t0, 1000000         # delay amount
+  rdtime t1                # read current time
+  add  t1, t1, t0          # target = now + delay
+wait:
+  rdtime t2                # read current time
+  bltu t2, t1, wait        # loop until now >= target
+```
 
-### At the Hardware
+## The Same Idea Elsewhere
 
-Clock/counter/compare logic counts time and generates an event or interrupt.
+- **Hardware:** the timer is a counter register and a compare register. When they match, an interrupt fires.
+- **RISC-V:** the `time` CSR (or `rdtime` pseudo-instruction) reads the timer. The privileged spec defines timer interrupts.
+- **OS:** the OS uses timer interrupts for scheduling — every tick, the timer fires and the scheduler decides whether to switch tasks.
+- **Linux/driver:** drivers use `udelay`/`mdelay`/`msleep` for short waits. For longer waits, they sleep and let the scheduler run other tasks.
 
-### In RISC-V
+## When It Fails
 
-The RISC-V timer facility and the SBI timer service can feed the S-mode OS timer.
-
-### Why the OS Cares
-
-The scheduler decides whether a waiting task keeps running or sleeps.
-
-### In Linux / Driver
-
-A Linux driver picks among polling helpers, delays, completions, and interrupts according to context.
-
-## Trace It
-
-1. **Hardware:** Clock/counter/compare logic counts time and generates an event or interrupt.
-2. **RISC-V:** The RISC-V timer facility and the SBI timer service can feed the S-mode OS timer.
-3. **OS:** The scheduler decides whether a waiting task keeps running or sleeps.
-4. **Linux / Driver:** A Linux driver picks among polling helpers, delays, completions, and interrupts according to context.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver polls a status bit in a tight loop with no timeout. The device never sets the bit (hardware bug, wrong initialization), and the driver hangs forever. The fix is a timeout counter: poll at most N times, then return an error. Polling without a timeout is a hang waiting to happen.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. A driver polls a status register in a loop. The device never sets the expected bit. What is the most likely outcome?
+   - A) The driver returns an error immediately
+   - B) The driver loops forever
+   - C) The CPU traps and the OS kills the process
+   - D) The driver skips the poll and continues
+   - Answer: B
+   - Explanation: A polling loop with no exit condition other than the bit being set will loop forever if the bit never sets. The driver needs a timeout.
+   > Hint: What ends a polling loop? Only the condition being true — or a timeout.
 
-1. Estimate roughly how many cycles a 1 GHz CPU can burn in 1 ms of tight polling.
-2. Explain why hardware polling without a timeout is dangerous in a production system, from the fault and scheduler perspectives.
-3. Look up the readl_poll_timeout family of helpers and investigate what problem they solve.
-4. Find one rule or API directly related to **Polling, Time, and Timers** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. A timer increments every microsecond. Software reads it, waits 500 microseconds, then reads it again. What is the expected difference?
+   - A) 500
+   - B) 500000
+   - C) 0
+   - D) It depends on the CPU frequency
+   - Answer: A
+   - Explanation: 500 microseconds × 1 increment per microsecond = 500 increments. The timer measures time in its own units.
+   > Hint: The timer rate is given. Multiply time by rate.
+
+3. Which of these are advantages of timer interrupts over polling? Pick all that apply.
+   - A) The CPU can sleep instead of spinning
+   - B) The CPU can run other tasks while waiting
+   - C) Timer interrupts are always faster than polling
+   - D) Timer interrupts use less power
+   - Answer: A, B, D
+   - Explanation: Interrupts let the CPU do other work (or sleep) while waiting. Polling burns CPU cycles. C is false — polling can be faster for very short waits because it avoids interrupt overhead.
+   > Hint: What does polling do with the CPU? What does an interrupt let the CPU do?
+
+4. Explain why a delay loop (`for (i = 0; i < N; i++);`) is unreliable on a modern CPU — what factors make the actual delay unpredictable?
+
+5. A driver uses `mdelay(100)` to wait for a device to reset. The device datasheet says reset takes 50ms typical, 200ms maximum. Is `mdelay(100)` safe? What should the driver do instead?
+
+## Limits
+
+This chapter assumes a simple timer. Real systems have multiple timers (per-core, per-cluster), dynamic tick rates, and clock sources that can change. Timer interrupts are the foundation of OS scheduling (Chapter 17) and are revisited with controllers in Chapter 19.
 
 ## Go Deeper
 
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [RISC-V SBI Specification](https://github.com/riscv-non-isa/riscv-sbi-doc)
+- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
+- [Linux Driver API (delays)](https://docs.kernel.org/driver-api/basics.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Polling is simple waiting that repeatedly checks device state, and timers and timeouts make that waiting safe.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 10, Chapter 12

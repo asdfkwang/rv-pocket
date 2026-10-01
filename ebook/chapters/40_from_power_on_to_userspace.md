@@ -5,78 +5,90 @@
 
 ## Why This Matters
 
-The final goal is to see architecture, OS, and Linux drivers as one system path from power-on to application I/O. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Everything in this book comes together in one path: power on → firmware → kernel → drivers → input/display/audio → user program. A single missing step anywhere in this chain breaks the entire system. This chapter is the capstone: trace the whole path, name every handoff, and see which chapters each step depends on.
 
 ## Core Idea
 
-The final goal is to see architecture, OS, and Linux drivers as one system path from power-on to application I/O.
+Boot is a chain of handoffs. Power-on starts firmware (Chapter 24). Firmware hands off to the kernel via SBI (Chapter 25). The kernel finds hardware through the device tree (Chapter 26). Drivers claim devices (Chapter 28) and access registers (Chapter 29). Interrupts (Chapter 30) and DMA (Chapter 32) move events and data. The input subsystem (Chapter 35) and display (Chapter 36) deliver user interaction. Then a program runs (Chapter 33).
 
-Reset, firmware, SBI, and Linux boot, the MMU and scheduler, Device Tree and driver probe, and VFS and userspace syscalls are not separate subjects but different stages of the same machine.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-Power→ROM→OpenSBI→Linux→MMU/IRQ/scheduler→DT/probe→rootfs/init→app syscall→driver→MMIO/DMA/IRQ
+1. Power on
+   CPU starts at reset vector → firmware (M-mode)
+
+2. Firmware initializes DRAM, UART
+   Loads kernel, jumps to kernel entry
+
+3. Kernel starts (S-mode via SBI)
+   Parses device tree → finds UART, GPIO, display, storage
+
+4. Drivers probe and initialize
+   Drivers claim registers, request IRQs, map DMA buffers
+
+5. Kernel mounts root filesystem
+   Starts first user process (init)
+
+6. init starts services
+   Login prompt appears — a user-space program is running
+
+7. User presses a button
+   GPIO interrupt → driver → input subsystem → application reacts
+
+8. Application updates the display
+   CPU writes frame → DMA → display controller → screen
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+## The Same Idea Elsewhere
 
-## Follow the System
+Every step in this chain has been covered. The power-on path exercises MMIO (Chapter 09), device registers (Chapter 10), timing (Chapter 11), interrupts (Chapter 12), privilege (Chapter 14), virtual memory (Chapter 20), the device tree (Chapter 26), and drivers (Chapters 27–33). The user-space path adds file I/O (Chapter 34) and cross-layer debugging (Chapter 39).
 
-### At the Hardware
+## When It Fails
 
-Reset, memory, interrupts, and devices are the physical basis of the whole execution.
-
-### In RISC-V
-
-ISA, privilege, traps, Sv39, and SBI are used throughout boot and runtime.
-
-### Why the OS Cares
-
-Processes, scheduling, VM, files, and synchronization turn hardware mechanisms into abstractions.
-
-### In Linux / Driver
-
-The driver model, DT, VFS, and DMA and IRQ subsystems assemble the real Linux system.
-
-## Trace It
-
-1. **Hardware:** Reset, memory, interrupts, and devices are the physical basis of the whole execution.
-2. **RISC-V:** ISA, privilege, traps, Sv39, and SBI are used throughout boot and runtime.
-3. **OS:** Processes, scheduling, VM, files, and synchronization turn hardware mechanisms into abstractions.
-4. **Linux / Driver:** The driver model, DT, VFS, and DMA and IRQ subsystems assemble the real Linux system.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+The system boots to firmware but never reaches the kernel. The cause is a missing clock enable in the firmware. The driver would have caught this (Chapter 28), but the firmware runs before any driver. This is why boot failures are special: the debugging tools you would normally use (drivers, dmesg) are not yet running.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. The system boots but no login prompt appears. The firmware runs correctly. What is the next layer to check?
+   - A) The device tree
+   - B) The root filesystem
+   - C) The GPIO driver
+   - D) The display driver
+   - Answer: B
+   - Explanation: The kernel is running. The login prompt requires the root filesystem to be mounted and init to start. If the root filesystem is not mounted, no user-space program runs.
+   > Hint: What does the kernel need before it can start user space? What provides that?
 
-1. Write a timeline of at least 12 steps from power-on to the first init instruction.
-2. When Linux boots but one device is missing, make a check plan in DT → match → probe → resource → subsystem order.
-3. Pick a real RISC-V Linux board and connect its firmware, SBI, DT, and kernel drivers to at least 10 chapters of this book.
-4. Find one rule or API in the official documentation directly related to **From Power-On to Userspace**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are part of the power-on path? Pick all that apply.
+   - A) Firmware
+   - B) SBI handoff
+   - C) Device tree parsing
+   - D) DMA cache coherency
+   - Answer: A, B, C
+   - Explanation: Firmware (A), SBI handoff (B), and device tree parsing (C) are part of boot. DMA cache coherency (D) is about data transfers, not boot itself.
+   > Hint: What runs first? What does the kernel need? What is not part of boot?
+
+3. The system boots to firmware but never reaches the kernel. The firmware runs correctly. What is the most likely cause?
+   - A) A missing clock enable in the firmware
+   - B) The driver is not compiled into the kernel
+   - C) The device tree is wrong
+   - D) The GPIO driver is broken
+   - Answer: A
+   - Explanation: The firmware runs before any driver. A missing clock enable prevents the firmware from completing its job. The kernel is never reached.
+   > Hint: What runs before the kernel? What debugging tools are available at that point?
+
+4. Trace the complete power-on path from power to login prompt. Name every handoff and identify which chapter covers each step.
+
+5. The system boots to the kernel but crashes during driver initialization. List three possible causes and the one diagnostic tool you would use first.
+
+## Limits
+
+This chapter shows a single-path boot. Real systems have recovery paths, multiple kernels, and network booting. The principle — a chain of handoffs, each depending on the previous one — is the same.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [RISC-V SBI Specification](https://github.com/riscv-non-isa/riscv-sbi-doc)
-- [OpenSBI](https://github.com/riscv-software-src/opensbi)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux Boot](https://docs.kernel.org/admin-guide/boot.html)
+- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- The final goal is to see architecture, OS, and Linux drivers as one system path from power-on to application I/O.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 39

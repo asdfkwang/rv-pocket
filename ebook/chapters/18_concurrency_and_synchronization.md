@@ -5,79 +5,79 @@
 
 ## Why This Matters
 
-Under concurrency, execution order is not fixed, so shared state can produce races and deadlocks. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Threads share memory, which makes communication easy but synchronization hard. **Concurrency** means multiple execution streams overlap. **Synchronization** is the set of tools — locks, semaphores, atomics — that make concurrent access safe. Without synchronization, shared state corrupts silently.
 
 ## Core Idea
 
-Under concurrency, execution order is not fixed, so shared state can produce races and deadlocks.
+A **mutex** (mutual exclusion) is a lock that only one thread can hold at a time. A thread that wants exclusive access acquires the mutex, does its work, then releases it. If another thread holds the mutex, the acquirer waits. A **semaphore** is a counter that allows up to N threads. An **atomic operation** is a hardware instruction that is indivisible — no other thread can observe it halfway.
 
-Mutexes, spinlocks, and atomic operations are not interchangeable; choose by context and shared-state lifetime. Also distinguish atomicity from memory ordering.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Two threads increment a counter safely:
 
 ```text
-count=0
-CPU0 read 0
-CPU1 read 0
-CPU0 write 1
-CPU1 write 1
-→ lost update
+lock:                                   # acquire mutex
+  lw   t0, counter(x10)                 # read
+  addi t0, t0, 1                       # increment
+  sw   t0, counter(x10)                 # write
+unlock:                                 # release mutex
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+Without the lock, two threads can read the same value, both increment, and both write the same result — one increment is lost. With the lock, only one thread can be in the critical section at a time.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the CPU provides atomic instructions (`amoswap`, `lr/sc` in RISC-V) that implement locks without software coordination.
+- **RISC-V:** the ISA defines `lr` (load-reserved) and `sc` (store-conditional) for atomic read-modify-write.
+- **OS:** the OS provides synchronization primitives (mutexes, semaphores, condition variables) built on hardware atomics.
+- **Linux/driver:** drivers use spinlocks (busy-wait) for short critical sections in interrupt context, and mutexes (sleep) for longer sections in process context.
 
-Atomic instructions and cache coherence are the basis of multicore synchronization.
+## When It Fails
 
-### In RISC-V
-
-The RISC-V A extension and memory-ordering rules are used to implement locks.
-
-### Why the OS Cares
-
-Sleeping locks and spinning locks affect the scheduler and execution context differently.
-
-### In Linux / Driver
-
-Linux lock types, PREEMPT_RT rules, and lockdep matter for finding context misuse.
-
-## Trace It
-
-1. **Hardware:** Atomic instructions and cache coherence are the basis of multicore synchronization.
-2. **RISC-V:** The RISC-V A extension and memory-ordering rules are used to implement locks.
-3. **OS:** Sleeping locks and spinning locks affect the scheduler and execution context differently.
-4. **Linux / Driver:** Linux lock types, PREEMPT_RT rules, and lockdep matter for finding context misuse.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+Thread A holds lock L1 and waits for lock L2. Thread B holds lock L2 and waits for lock L1. Neither can proceed. This is a **deadlock**. The fix: always acquire locks in the same order, or use a timeout to detect and break the deadlock.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. Thread A holds mutex M1 and requests mutex M2. Thread B holds M2 and requests M1. What happens?
+   - A) Both threads proceed
+   - B) Both threads wait forever — deadlock
+   - C) The OS kills one thread
+   - D) The mutexes are automatically released
+   - Answer: B
+   - Explanation: Each thread holds what the other needs. Neither can release its lock without acquiring the other. This is a classic deadlock.
+   > Hint: What does each thread need? What does it hold?
 
-1. Find in the official locking documentation why a mutex must not be used in a hard IRQ handler.
-2. Explain the situation requiring irqsave when process context and IRQ context share the same spinlock.
-3. Connect the Coffman deadlock conditions to a driver example.
-4. Find one rule or API directly related to **Concurrency and Synchronization** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are synchronization primitives? Pick all that apply.
+   - A) Mutex
+   - B) Semaphore
+   - C) Atomic operation
+   - D) Context switch
+   - Answer: A, B, C
+   - Explanation: Mutexes, semaphores, and atomics are all synchronization tools. A context switch is a mechanism the OS uses, not a synchronization primitive.
+   > Hint: Which of these coordinates access to shared data?
+
+3. A spinlock is used in interrupt context. Why can't a mutex be used instead?
+   - A) Spinlocks are faster
+   - B) Mutexes can sleep, and interrupt context cannot sleep
+   - C) Mutexes are only for user space
+   - D) Spinlocks use less memory
+   - Answer: B
+   - Explanation: A mutex may sleep if the lock is held. Interrupt context cannot sleep (Chapter 12). A spinlock busy-waits, which is legal in interrupt context.
+   > Hint: What does a mutex do when the lock is held? Is that legal in interrupt context?
+
+4. Explain the difference between a mutex and a semaphore — what does each one count, and when would you use one over the other?
+
+5. A driver uses a spinlock to protect a hardware register. The critical section is very short (a few instructions). Why is a spinlock appropriate here, and what would go wrong if the critical section called a function that sleeps?
+
+## Limits
+
+This chapter shows basic synchronization. Real systems have reader-writer locks, RCU (Read-Copy-Update), and lock-free data structures. The principle — coordinate access to shared state — is universal.
 
 ## Go Deeper
 
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
-- [Linux Locking](https://docs.kernel.org/locking/)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
+- [Linux Kernel Locking](https://docs.kernel.org/locking/)
+- [RISC-V Atomics](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Under concurrency, execution order is not fixed, so shared state can produce races and deadlocks.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 17, Chapter 19

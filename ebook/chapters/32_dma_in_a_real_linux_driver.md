@@ -5,79 +5,85 @@
 
 ## Why This Matters
 
-The Linux DMA API maps a CPU buffer to a device-visible address, hiding coherency and address-translation differences. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+DMA (Chapter 22) lets a device transfer data without the CPU. In Linux, a driver uses the DMA API to map buffers for device access. The API handles address translation, cache coherency, and mapping lifetime. Using it wrong causes data corruption, crashes, and security vulnerabilities.
 
 ## Core Idea
 
-The Linux DMA API maps a CPU buffer to a device-visible address, hiding coherency and address-translation differences.
+A driver maps a buffer with `dma_map_single` (for a single buffer) or `dma_map_sg` (for scatter-gather). The API returns a DMA address that the device can use. The driver programs the DMA engine with this address. When the transfer is done, the driver unmaps with `dma_unmap_single` or `dma_unmap_sg`. The API handles cache coherency at map and unmap time.
 
-Streaming mappings and coherent allocations have different ownership and lifetime rules. Ignoring mapping errors, direction, DMA masks, and sync rules can cause intermittent corruption.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
+```c
+// Map a buffer for DMA
+dma_addr_t dma_handle = dma_map_single(dev, buf, len, DMA_TO_DEVICE);
+if (dma_mapping_error(dev, dma_handle)) {
+    // handle error
+}
 
-## Small Example
+// Program the DMA engine
+writel(dma_handle, uart->base + UART_DMA_ADDR);
+writel(len, uart->base + UART_DMA_LEN);
+writel(UART_DMA_START, uart->base + UART_DMA_CONTROL);
 
-```text
-buf fill
-→ dma_map_single(TO_DEVICE)
-→ program dma_addr
-→ device transfer
-→ completion
-→ dma_unmap_single
+// ... later, after the interrupt ...
+dma_unmap_single(dev, dma_handle, len, DMA_TO_DEVICE);
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+The driver never touches the DMA address directly — it passes it to the device.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the DMA engine reads and writes memory directly. It uses physical (bus) addresses.
+- **RISC-V:** the CPU programs the DMA engine via MMIO (Chapter 09).
+- **OS:** the kernel provides the DMA API that handles mapping and coherency.
+- **Linux/driver:** the driver uses the DMA API to safely share buffers with devices.
 
-The DMA mask, coherency properties, and IOMMU topology limit which addresses the device can reach.
+## When It Fails
 
-### In RISC-V
-
-Architecture-specific cache maintenance and ordering may be implemented underneath the generic DMA API.
-
-### Why the OS Cares
-
-The OS and IOMMU manage DMA translation, device isolation, and buffer lifetime.
-
-### In Linux / Driver
-
-A dma_addr_t is not a CPU pointer and must follow the mapping/unmapping contract.
-
-## Trace It
-
-1. **Hardware:** The DMA mask, coherency properties, and IOMMU topology limit which addresses the device can reach.
-2. **RISC-V:** Architecture-specific cache maintenance and ordering may be implemented underneath the generic DMA API.
-3. **OS:** The OS and IOMMU manage DMA translation, device isolation, and buffer lifetime.
-4. **Linux / Driver:** A dma_addr_t is not a CPU pointer and must follow the mapping/unmapping contract.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver maps a buffer, starts DMA, and immediately unmaps. The DMA engine is still reading the buffer. The driver frees the buffer. The DMA engine writes to freed memory. The fix: unmap only after the transfer is complete (after the interrupt).
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A driver maps a buffer with `dma_map_single`. What address does it get?
+   - A) A kernel virtual address
+   - B) A user-space virtual address
+   - C) A DMA (bus) address
+   - D) A physical address
+   - Answer: C
+   - Explanation: `dma_map_single` returns a DMA address — the address the device uses. It may or may not equal the physical address (IOMMU).
+   > Hint: What address does the device understand? What does the API return?
 
-1. Explain why the return value of dma_map_single must not be dereferenced as a CPU pointer.
-2. Investigate when dma_set_mask_and_coherent can fail and what choices the driver has.
-3. Find in the DMA API HOWTO why the segment count can change across a scatter-gather mapping.
-4. Find one rule or API in the official documentation directly related to **DMA in a Real Linux Driver**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about the DMA API? Pick all that apply.
+   - A) It handles cache coherency
+   - B) It translates addresses for the device
+   - C) It can be used on any pointer
+   - D) It manages mapping lifetime
+   - Answer: A, B, D
+   - Explanation: The DMA API handles coherency (A), translates addresses (B), and manages lifetime (D). It must be used on appropriate buffers (C is false).
+   > Hint: What does the API do for you? What must you still do?
+
+3. A driver unmaps a DMA buffer before the transfer completes. What is the most likely outcome?
+   - A) The transfer succeeds
+   - B) The DMA engine writes to freed memory
+   - C) The kernel panics immediately
+   - D) The device stops working
+   - Answer: B
+   - Explanation: If the buffer is freed while DMA is in progress, the engine may write to freed memory. This causes corruption or crashes.
+   > Hint: What is the DMA engine doing when the buffer is freed? Where does it write?
+
+4. Explain the difference between `dma_map_single` and `dma_map_sg` — when would you use each?
+
+5. A driver uses `dma_map_single` for a buffer, starts DMA, and the transfer completes. The driver reads the buffer but sees stale data. What is the most likely cause?
+
+## Limits
+
+This chapter shows simple DMA mapping. Real drivers use scatter-gather lists, DMA rings, and IOMMU. The principle — map, transfer, unmap — is the same.
 
 ## Go Deeper
 
 - [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
+- [Linux Driver API (DMA)](https://docs.kernel.org/driver-api/dma.html)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- The Linux DMA API maps a CPU buffer to a device-visible address, hiding coherency and address-translation differences.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 31, Chapter 33

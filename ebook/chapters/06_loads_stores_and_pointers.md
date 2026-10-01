@@ -5,77 +5,76 @@
 
 ## Why This Matters
 
-RISC-V is a load/store architecture: it loads memory values into registers and stores results back. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Every variable access is a load or store: read a value from memory into a register, or write a register back. Pointers are just addresses held in registers. When a program reads the wrong bytes, the bug is almost always here — wrong size, wrong offset, or a pointer that was never valid.
 
 ## Core Idea
 
-RISC-V is a load/store architecture: it loads memory values into registers and stores results back.
+A load reads memory at an address into a register; a store writes a register to memory. The address comes from a base register plus an immediate offset. The instruction name says how many bytes move: `lb` (byte), `lh` (halfword), `lw` (word), `ld` (doubleword) — and `sb`, `sh`, `sw`, `sd` for stores.
 
-Addresses are usually computed as a base register plus an immediate offset. C pointers, stack fields, struct members, and MMIO offsets all connect to this pattern.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-x10=0x1000
-ld x5,8(x10) → read 0x1008
-addi x5,x5,1
-sd x5,8(x10)
+x10 = 0x1000          (base address)
+x11 = 4               (offset)
+lw x12, 4(x10)        → reads 4 bytes at 0x1004 into x12
+sw x12, 8(x10)        → writes x12 to 0x1008
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+The address is computed first (base + offset), then the memory operation happens. The offset is a constant baked into the instruction; the base is whatever the register holds at runtime.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the memory subsystem serves the computed address; caches may hold a copy (Chapter 19).
+- **RISC-V:** load/store instructions are the only way to touch memory — arithmetic works on registers only.
+- **OS:** the OS decides which addresses a process may access; a bad pointer faults before hardware ever sees it (Chapter 20).
+- **Linux/driver:** `__iomem` pointers use special accessors (`readl`/`writel`) instead of plain loads/stores, because device registers are not normal memory.
 
-The load/store unit computes the effective address and issues the request to the MMU, caches, and bus.
+## When It Fails
 
-### In RISC-V
-
-lw/lwu/ld and sw/sd define the width and sign-extension behavior.
-
-### Why the OS Cares
-
-When virtual memory is on, every address an instruction uses goes through translation and a permission check.
-
-### In Linux / Driver
-
-readl(base+offset) addresses a device register but follows a different I/O contract than a normal pointer dereference.
-
-## Trace It
-
-1. **Hardware:** The load/store unit computes the effective address and issues the request to the MMU, caches, and bus.
-2. **RISC-V:** lw/lwu/ld and sw/sd define the width and sign-extension behavior.
-3. **OS:** When virtual memory is on, every address an instruction uses goes through translation and a permission check.
-4. **Linux / Driver:** readl(base+offset) addresses a device register but follows a different I/O contract than a normal pointer dereference.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver reads a 32-bit status register with `readl` but the hardware is big-endian while the CPU is little-endian. The value arrives byte-swapped and every bit test fails. The pointer was fine; the width and byte order were not. Always check the register width and the platform's byte order before writing bit tests.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. `x10 = 0x2000`. What address does `lw x12, 0x10(x10)` read from?
+   - A) `0x2010`
+   - B) `0x2000`
+   - C) `0x2100`
+   - D) `0x30`
+   - Answer: A
+   - Explanation: Base + offset: `0x2000 + 0x10 = 0x2010`. The offset is added to the base register, not used alone.
+   > Hint: The address is computed before the read. What two numbers get added?
 
-1. Compare the RV64 results when lw versus lwu reads 0xffffffff.
-2. Compute the effective address of a[7] for int a[10] and explain how the compiler builds it as base+offset.
-3. Find in the Linux documentation why readl() must be used instead of a volatile u32 pointer.
-4. Find one rule or API directly related to **Loads, Stores, and Pointers** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these move exactly 4 bytes? Pick all that apply.
+   - A) `lw`
+   - B) `lb`
+   - C) `sw`
+   - D) `ld`
+   - Answer: A, C
+   - Explanation: `lw`/`sw` are word (4-byte) operations. `lb` moves one byte; `ld` moves 8 bytes on RV64.
+   > Hint: l=load, s=store; the letter after is the width: b=byte, h=halfword, w=word, d=doubleword.
+
+3. A pointer in `x10` holds `0xDEADBEEF`. What happens when the CPU executes `lw x12, 0(x10)`?
+   - A) It reads 4 bytes from address `0xDEADBEEF`
+   - B) It writes `0xDEADBEEF` to memory
+   - C) It adds `0xDEADBEEF` to `x12`
+   - D) It traps immediately because the address is invalid
+   - Answer: A
+   - Explanation: A pointer is just an address in a register. `lw` reads from that address. Whether the address is valid is a separate question (the OS may fault later), but the instruction's intent is a read.
+   > Hint: What does `lw` do with the address in its base register?
+
+4. Look up the RISC-V load/store encoding and explain why the offset is a 12-bit signed immediate — what range of offsets can a single instruction reach, and how do you access something farther away?
+
+5. A struct has fields at offsets 0, 4, and 8. A driver reads offset 0 with `readl` and gets the right value, but offset 4 always reads as 0 even though the register exists. List the two most likely causes and the one read that distinguishes them.
+
+## Limits
+
+This chapter assumes aligned access. RISC-V allows unaligned loads/stores in many configurations, but device registers often do not — an unaligned access to MMIO can trap or return garbage. Compressed instructions (2-byte) also change instruction sizes, which matters for PC arithmetic in Chapter 07.
 
 ## Go Deeper
 
 - [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
 - [Linux Device I/O](https://docs.kernel.org/driver-api/device-io.html)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- RISC-V is a load/store architecture: it loads memory values into registers and stores results back.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 05, Chapter 07

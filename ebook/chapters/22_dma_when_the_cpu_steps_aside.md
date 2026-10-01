@@ -5,79 +5,82 @@
 
 ## Why This Matters
 
-DMA lets a device perform memory transfers instead of the CPU, making large data paths efficient. This concept does not end at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and the Linux driver.
+Copying data with the CPU is slow — every byte passes through registers. **DMA** (Direct Memory Access) lets a device read and write memory directly, without CPU involvement. The CPU sets up the transfer, the device does the work, and an interrupt signals completion. DMA is essential for high-throughput devices like displays, network cards, and storage.
 
 ## Core Idea
 
-DMA lets a device perform memory transfers instead of the CPU, making large data paths efficient.
+A DMA engine is a hardware unit that generates memory transactions. The CPU programs it with: source address, destination address, and length. The engine transfers data and raises an interrupt when done. The CPU is free to do other work during the transfer. DMA addresses are **physical** (or bus) addresses — the device does not understand virtual memory.
 
-You cannot assume that a CPU virtual address and a device DMA address are the same; you must consider mapping lifetime, direction, ownership, the IOMMU, and cache coherency.
+## Worked Example
 
-On the first read, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Copy 4 KB from RAM to a display buffer:
 
 ```text
-CPU fills buffer
-→ dma_map
-→ program DMA address/len
-→ device transfer
-→ IRQ
-→ unmap
+1. CPU writes to DMA registers:
+     source = 0x1000 (physical)
+     dest   = 0x2000 (physical)
+     length = 4096
+2. CPU starts the transfer
+3. DMA engine reads 0x1000..0x10FFF, writes 0x2000..0x20FFF
+4. DMA engine raises an interrupt
+5. CPU handles the interrupt, knows the transfer is done
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control passes to another layer.
+The CPU did almost nothing — just setup and completion handling.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the DMA engine is a bus master — it can initiate memory transactions independently of the CPU.
+- **RISC-V:** the ISA does not define DMA — it is a platform feature. The CPU programs the DMA engine via MMIO (Chapter 09).
+- **OS:** the OS provides DMA abstractions (like the Linux DMA API) that handle mapping, coherency, and streaming.
+- **Linux/driver:** a driver uses `dma_map_single` (for coherent buffers) or `dma_map_sg` (for scatter-gather) to get device-usable addresses, and `dma_unmap_*` when done.
 
-A device or DMA engine acts as a bus master that generates memory transactions.
+## When It Fails
 
-### In RISC-V
-
-Platform I/O and memory-ordering behavior matter more than the ISA for DMA correctness.
-
-### Why the OS Cares
-
-The OS manages DMA-capable memory, device isolation, IOMMU mappings, and ownership.
-
-### In Linux / Driver
-
-The Linux DMA API abstracts the difference between CPU pointers and dma_addr_t, cache maintenance, and mappings.
-
-## Trace It
-
-1. **Hardware:** A device or DMA engine acts as a bus master that generates memory transactions.
-2. **RISC-V:** Platform I/O and memory-ordering behavior matter more than the ISA for DMA correctness.
-3. **OS:** The OS manages DMA-capable memory, device isolation, IOMMU mappings, and ownership.
-4. **Linux / Driver:** The Linux DMA API abstracts the difference between CPU pointers and dma_addr_t, cache maintenance, and mappings.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver passes a kernel virtual address to the DMA engine. The engine uses it as a physical address. The transfer reads or writes the wrong memory. The fix: use the DMA API to get the correct bus address. The virtual-to-physical translation is not optional — it is the difference between working and corruption.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. A DMA transfer is set up with source 0x1000, dest 0x2000, length 4096. What does the DMA engine do?
+   - A) Copy 4096 bytes from virtual 0x1000 to virtual 0x2000
+   - B) Copy 4096 bytes from physical 0x1000 to physical 0x2000
+   - C) Copy 4096 bytes from CPU register to memory
+   - D) Nothing — the CPU must do the copy
+   - Answer: B
+   - Explanation: DMA works with physical (bus) addresses. The engine copies directly between physical addresses.
+   > Hint: What kind of address does a device understand? Virtual or physical?
 
-1. Explain why passing a virt_to_phys result directly to a device is not portable.
-2. Research why DMA_TO_DEVICE and DMA_FROM_DEVICE matter for cache synchronization.
-3. Analyze step by step what race occurs if the CPU modifies a buffer while the device is performing DMA on it.
-4. Find one rule or API directly related to **DMA: When the CPU Steps Aside** in the official documentation, and explain one condition or exception that this chapter's simplified model omits.
-5. Suppose this chapter's concept causes a problem on a real Linux system. Choose the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace** and design what state to observe and which tools to use.
+2. Which of these are true about DMA? Pick all that apply.
+   - A) DMA transfers do not use the CPU
+   - B) DMA addresses are physical addresses
+   - C) DMA requires cache coherency management
+   - D) DMA is slower than CPU copying
+   - Answer: A, B, C
+   - Explanation: DMA is faster than CPU copying (D is false). It does not use the CPU (A), uses physical addresses (B), and requires cache management (C).
+   > Hint: Why is DMA faster? What does the CPU do during a DMA transfer?
+
+3. A driver allocates a buffer, writes a descriptor to it, and starts DMA. The DMA engine reads the old descriptor. What is the most likely cause?
+   - A) The DMA engine is broken
+   - B) The descriptor is in the cache but not in DRAM
+   - C) The buffer is too small
+   - D) The interrupt is not configured
+   - Answer: B
+   - Explanation: The CPU wrote the descriptor to the cache. The DMA engine reads DRAM. Without a cache flush, the engine sees the old data.
+   > Hint: Where does the CPU write? Where does the DMA engine read?
+
+4. Explain the difference between coherent and streaming DMA mappings — when would you use each, and what is the performance tradeoff?
+
+5. A driver uses `dma_map_single` for a buffer, starts DMA, and immediately calls `dma_unmap_single`. The transfer fails. What went wrong, and what is the correct order of operations?
+
+## Limits
+
+This chapter shows simple DMA. Real systems have scatter-gather (multiple buffers in one transfer), IOMMU (device address translation), and DMA rings (hardware-managed descriptor lists). The principle — the device accesses memory directly — is the same.
 
 ## Go Deeper
 
 - [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
+- [Linux Driver API (DMA)](https://docs.kernel.org/driver-api/dma.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- DMA lets a device perform memory transfers instead of the CPU, making large data paths efficient.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess unknown details; look them up in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 21, Chapter 23

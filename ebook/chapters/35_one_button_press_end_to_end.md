@@ -5,82 +5,78 @@
 
 ## Why This Matters
 
-Tracing a single button event from the physical level to the userspace input event connects everything so far — MMIO, IRQ, trap, driver, and scheduler — into one path. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A button press is the simplest user input, but it travels through every layer of the system: hardware → interrupt → driver → input subsystem → event → application. Tracing one press end to end shows how all the pieces fit together — and where things can go wrong.
 
 ## Core Idea
 
-Tracing a single button event from the physical level to the userspace input event connects everything so far — MMIO, IRQ, trap, driver, and scheduler — into one path.
+A button is a GPIO pin. When pressed, the pin changes state. The GPIO controller raises an interrupt. The driver's interrupt handler reads the pin state and reports an input event. The input subsystem delivers the event to the application. The application reacts.
 
-End-to-end debugging means checking the state each layer owns and the signal the next layer observes. The same "button does not work" symptom can come from different failing layers.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-finger
-→ GPIO level/status
-→ interrupt controller
-→ RISC-V trap
-→ Linux IRQ
-→ input_report_key
-→ evdev
-→ userspace
+1. Button pressed → GPIO pin goes low
+2. GPIO controller raises interrupt
+3. CPU takes interrupt, jumps to handler
+4. Driver handler: read pin state, report EV_KEY event
+5. Input subsystem: deliver event to /dev/input/eventX
+6. Application: read event, react (e.g., move character)
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+Each step is a handoff. The button press becomes an electrical signal, then an interrupt, then a driver event, then an application action.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the GPIO pin is a physical connection to the button. The controller detects the change.
+- **RISC-V:** the CPU takes the interrupt and jumps to the handler (Chapter 12).
+- **OS:** the input subsystem manages input devices and delivers events to applications.
+- **Linux/driver:** the GPIO driver handles the interrupt and reports the event.
 
-Pinmux, pull, debounce, GPIO direction, and IRQ trigger settings determine the physical starting point.
+## When It Fails
 
-### In RISC-V
-
-The interrupt trap moves CPU control flow into the kernel.
-
-### Why the OS Cares
-
-The event can wake a sleeping reader and make it runnable.
-
-### In Linux / Driver
-
-The GPIO/IRQ/input subsystems produce a standardized event across several driver layers.
-
-## Trace It
-
-1. **Hardware:** Pinmux, pull, debounce, GPIO direction, and IRQ trigger settings determine the physical starting point.
-2. **RISC-V:** The interrupt trap moves CPU control flow into the kernel.
-3. **OS:** The event can wake a sleeping reader and make it runnable.
-4. **Linux / Driver:** The GPIO/IRQ/input subsystems produce a standardized event across several driver layers.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A button press is missed. The driver's interrupt handler is too slow, or the interrupt is shared with another device and the handler returns `IRQ_NONE` without checking the button. The fix: check all possible interrupt sources in the handler, and keep the handler short.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A button is pressed. What is the first thing that happens in software?
+   - A) The application reads the button state
+   - B) The driver's interrupt handler runs
+   - C) The input subsystem delivers an event
+   - D) The GPIO controller raises an interrupt
+   - Answer: D
+   - Explanation: The GPIO controller detects the pin change and raises an interrupt. The CPU then jumps to the driver's handler.
+   > Hint: What detects the button press? What signals the CPU?
 
-1. Give five possible causes for an IRQ count of zero, spread across the physical, pinmux, DT, and controller stages.
-2. Design the next observation points when the IRQ count increases but evtest stays silent.
-3. Find the upstream gpio-keys binding and source, and map it onto this path.
-4. Find one rule or API in the official documentation directly related to **One Button Press, End to End**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are part of the button press path? Pick all that apply.
+   - A) GPIO controller
+   - B) Interrupt handler
+   - C) Input subsystem
+   - D) Page cache
+   - Answer: A, B, C
+   - Explanation: The GPIO controller (A), interrupt handler (B), and input subsystem (C) are all part of the path. The page cache (D) is for storage, not input.
+   > Hint: What layers does a button press cross? What is not involved?
+
+3. A button press is missed. The interrupt handler is running. What is the most likely cause?
+   - A) The GPIO controller is broken
+   - B) The handler returned IRQ_NONE without checking the button
+   - C) The application is not reading events
+   - D) The button is not connected
+   - Answer: B
+   - Explanation: If the handler returns `IRQ_NONE`, the kernel assumes the interrupt was not from this device. The button press is lost.
+   > Hint: What does the handler return if it did not handle the interrupt? What happens to the event?
+
+4. Explain why the input subsystem exists — why does the application not read the GPIO pin directly?
+
+5. A button press generates an interrupt but the application does not react. List three possible causes and the one test that would distinguish them.
+
+## Limits
+
+This chapter shows a simple button. Real input devices have debouncing, multiple buttons, and complex event protocols. The principle — hardware event → driver → subsystem → application — is the same.
 
 ## Go Deeper
 
-- [Linux Input](https://docs.kernel.org/input/)
-- [Linux Generic IRQ](https://docs.kernel.org/core-api/genericirq.html)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux Input Subsystem](https://docs.kernel.org/input/)
+- [Linux GPIO Driver](https://docs.kernel.org/driver-api/gpio/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Tracing a single button event from the physical level to the userspace input event connects everything so far — MMIO, IRQ, trap, driver, and scheduler — into one path.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 34, Chapter 36

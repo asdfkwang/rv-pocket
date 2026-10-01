@@ -5,79 +5,81 @@
 
 ## Why This Matters
 
-An OS abstracts and protects hardware resources and manages them so multiple execution flows can share them. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Without an OS, every program must manage hardware itself — schedule its own time, handle its own I/O, protect its own memory. The OS is the software that makes this unnecessary: it provides abstractions (files, processes, sockets) so programs can focus on their logic.
 
 ## Core Idea
 
-An OS abstracts and protects hardware resources and manages them so multiple execution flows can share them.
+The OS does five things: **process management** (run multiple programs), **memory management** (give each program its own address space), **file systems** (store and retrieve data), **device management** (talk to hardware via drivers), and **system calls** (the interface between programs and the OS). Everything else is detail.
 
-It turns a CPU into process execution time, RAM into virtual address spaces, storage blocks into files, and raw device events into standardized I/O. Syscalls and interrupts are the main kernel entry paths.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+A program calls `write(fd, "A", 1)`:
 
 ```text
-CPU core→tasks
-RAM→virtual memory
-SSD blocks→files
-GPIO IRQ→input event
+1. Program executes ecall (system call)
+2. CPU traps to S-mode, jumps to OS handler
+3. OS checks: is fd valid? does the program have permission?
+4. OS finds the file/device for fd
+5. OS calls the driver's write function
+6. Driver writes to the device register
+7. OS returns the result to the program
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+The program never touched hardware. The OS did everything on its behalf.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the CPU provides the trap mechanism (Chapter 13) and privilege levels (Chapter 14) that make the OS possible.
+- **RISC-V:** the privileged spec defines the CSRs and instructions the OS uses to manage hardware.
+- **OS:** the OS is the software that uses these mechanisms to provide abstractions.
+- **Linux/driver:** a driver is the OS's agent for a specific device. The OS calls the driver; the driver talks to hardware.
 
-Privilege, the MMU, timers, interrupts, and atomics are the basis of OS mechanisms.
+## When It Fails
 
-### In RISC-V
-
-The privileged ISA provides traps, translation, and protection.
-
-### Why the OS Cares
-
-The OS builds scheduler, VM, file, and synchronization policies on top of these mechanisms.
-
-### In Linux / Driver
-
-Inside Linux, subsystems such as the scheduler, MM, VFS, networking, and the driver model cooperate.
-
-## Trace It
-
-1. **Hardware:** Privilege, the MMU, timers, interrupts, and atomics are the basis of OS mechanisms.
-2. **RISC-V:** The privileged ISA provides traps, translation, and protection.
-3. **OS:** The OS builds scheduler, VM, file, and synchronization policies on top of these mechanisms.
-4. **Linux / Driver:** Inside Linux, subsystems such as the scheduler, MM, VFS, networking, and the driver model cooperate.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A program writes to a file and the write succeeds, but the data is lost on reboot. The OS buffered the write in memory (for performance) and never flushed it to disk. The program should have called `fsync` to force the write to stable storage. The bug is not the write — it is assuming the OS's buffering is transparent.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. A program calls `read(fd, buf, 100)`. What does the OS do first?
+   - A) Read 100 bytes from the device
+   - B) Check if fd is valid and the program has permission
+   - C) Allocate 100 bytes in kernel memory
+   - D) Call the driver's read function
+   - Answer: B
+   - Explanation: The OS validates the request before doing anything. An invalid fd or a permission violation returns an error without touching the device.
+   > Hint: What does the OS check before trusting a program's request?
 
-1. Connect CPU virtualization, memory virtualization, and device abstraction each to its hardware mechanism.
-2. Explain why saying the CPU stops during a blocked read can be wrong.
-3. Find the representative directories for the scheduler, MM, VFS, and driver core in the Linux source tree and summarize their roles.
-4. Find one rule or API directly related to **What an Operating System Actually Does** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are OS responsibilities? Pick all that apply.
+   - A) Scheduling processes
+   - B) Managing memory
+   - C) Talking directly to device registers
+   - D) Providing system calls
+   - Answer: A, B, D
+   - Explanation: The OS schedules processes, manages memory, and provides system calls. It does NOT talk to device registers directly — drivers do that.
+   > Hint: Who touches hardware registers? The OS or its agents?
+
+3. A program opens a file, writes data, and closes it without calling `fsync`. The system crashes. What happens to the data?
+   - A) It is always safe — the OS flushes on close
+   - B) It may be lost — the OS may have buffered it in memory
+   - C) It is corrupted — the file is incomplete
+   - D) It is duplicated — the OS writes it twice
+   - Answer: B
+   - Explanation: The OS buffers writes for performance. Without `fsync`, the data may still be in memory when the crash occurs. `close` does not guarantee the data reached stable storage.
+   > Hint: What does the OS do to make writes fast? What makes them safe?
+
+4. Explain why the OS uses buffering for file I/O — what performance problem does it solve, and what correctness risk does it introduce?
+
+5. Two programs open the same file and write to it simultaneously. Without any coordination, the result is interleaved garbage. Explain what the OS provides to prevent this, and what the programs must do to use it.
+
+## Limits
+
+This chapter shows the OS as a monolithic kernel. Microkernels move drivers and file systems to user space. The abstractions are the same; the implementation differs. The key idea — the OS provides abstractions over hardware — is universal.
 
 ## Go Deeper
 
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Memory Management](https://docs.kernel.org/mm/)
-- [Linux VFS](https://docs.kernel.org/filesystems/vfs.html)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [Linux System Calls](https://docs.kernel.org/arch/riscv/syscall.html)
+- [Linux File Systems](https://docs.kernel.org/filesystems/)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- An OS abstracts and protects hardware resources and manages them so multiple execution flows can share them.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 14, Chapter 16

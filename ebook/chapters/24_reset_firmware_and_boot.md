@@ -5,76 +5,87 @@
 
 ## Why This Matters
 
-After power-on and before Linux starts, the reset vector, ROM, firmware, and boot stages prepare the CPU and the platform. This concept does not end at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and the Linux driver.
+When power is applied, the CPU starts executing at a fixed address — the **reset vector**. The first code that runs is **firmware**: it initializes memory, finds the bootloader or kernel, and hands control to the OS. Without firmware, the hardware is inert. Understanding boot is understanding who owns the machine at each stage.
 
 ## Core Idea
 
-After power-on and before Linux starts, the reset vector, ROM, firmware, and boot stages prepare the CPU and the platform.
+Boot is a chain of handoffs: firmware → bootloader → kernel → init. Each stage sets up more of the system and passes control to the next. The firmware runs in M-mode (most privileged), initializes DRAM and essential devices, loads the kernel into memory, and jumps to it. The kernel takes over, initializes drivers, and starts the first user process.
 
-The boot flow differs per board, but the same view applies throughout: each stage hands privilege mode, memory state, a hardware description, and arguments to the next stage.
-
-On the first read, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-Power→Reset/ROM→OpenSBI→bootloader or Linux→kernel init→userspace
+1. Power on
+2. CPU starts at reset vector (e.g., 0x1000)
+3. Firmware (M-mode) runs:
+     - initialize DRAM
+     - initialize UART (for debug output)
+     - load kernel from storage to RAM
+     - jump to kernel entry
+4. Kernel (S-mode) runs:
+     - initialize page tables
+     - initialize drivers
+     - mount root filesystem
+     - start init process
+5. Init (U-mode) runs:
+     - start system services
+     - present login prompt
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control passes to another layer.
+Each stage is more complex than the last. The firmware is small and hardware-specific; the kernel is large and portable.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the reset vector is a fixed address. The CPU's first instruction is fetched from there.
+- **RISC-V:** the privileged spec defines the reset behavior and the CSRs that firmware configures.
+- **OS:** the kernel is the second stage. It assumes firmware has done minimal setup (DRAM, UART).
+- **Linux/driver:** drivers are initialized by the kernel after boot. A driver's probe function runs when the kernel finds a matching device.
 
-The reset vector, boot ROM, and DRAM/clock initialization may be required before the kernel.
+## When It Fails
 
-### In RISC-V
-
-Hart reset state, privilege handoff, and SBI connect to the RISC-V boot path.
-
-### Why the OS Cares
-
-The kernel consumes the memory map and hardware description passed by firmware to initialize OS state.
-
-### In Linux / Driver
-
-The Linux RISC-V boot protocol, early console, DTB, and initramfs are the key observation points for boot debugging.
-
-## Trace It
-
-1. **Hardware:** The reset vector, boot ROM, and DRAM/clock initialization may be required before the kernel.
-2. **RISC-V:** Hart reset state, privilege handoff, and SBI connect to the RISC-V boot path.
-3. **OS:** The kernel consumes the memory map and hardware description passed by firmware to initialize OS state.
-4. **Linux / Driver:** The Linux RISC-V boot protocol, early console, DTB, and initramfs are the key observation points for boot debugging.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+The firmware initializes DRAM but forgets to set the memory size in the device tree. The kernel reads the device tree, sees zero available memory, and panics. The bug is not the kernel — it is the firmware's incomplete hardware description. The fix: firmware must describe the hardware accurately.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. The CPU is reset. Where does it start executing?
+   - A) At address 0x00000000
+   - B) At the reset vector (a fixed address defined by the platform)
+   - C) At the kernel entry point
+   - D) At the first instruction of the firmware's data section
+   - Answer: B
+   - Explanation: The reset vector is a fixed address. The CPU's first fetch is from there. The firmware is typically placed at the reset vector.
+   > Hint: What is the first thing the CPU does after reset? Where does it look?
 
-1. List per-stage checkpoints for the case where firmware logs appear but the kernel early console does not.
-2. Explain when initramfs and the real root filesystem are each needed during boot.
-3. Find the DTB and hart-state requirements in the RISC-V Linux boot requirements.
-4. Find one rule or API directly related to **Reset, Firmware, and Boot** in the official documentation, and explain one condition or exception that this chapter's simplified model omits.
-5. Suppose this chapter's concept causes a problem on a real Linux system. Choose the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace** and design what state to observe and which tools to use.
+2. Which of these are firmware responsibilities? Pick all that apply.
+   - A) Initialize DRAM
+   - B) Load the kernel into memory
+   - C) Initialize all device drivers
+   - D) Jump to the kernel entry point
+   - Answer: A, B, D
+   - Explanation: Firmware initializes essential hardware (DRAM), loads the kernel, and jumps to it. Device drivers are the kernel's job, not firmware's.
+   > Hint: What does the kernel need before it can run? What is the kernel's job?
+
+3. The kernel starts but panics with "no memory available." The firmware initialized DRAM correctly. What is the most likely cause?
+   - A) The kernel is corrupted
+   - B) The firmware did not describe the memory in the device tree
+   - C) The CPU is too slow
+   - D) The UART is not initialized
+   - Answer: B
+   - Explanation: The kernel learns about memory from the device tree. If the firmware does not describe it, the kernel sees no memory.
+   > Hint: How does the kernel know how much memory exists? Who tells it?
+
+4. Explain the handoff from firmware to kernel — what state does the firmware set up, and what does the kernel assume is already done?
+
+5. A board boots to firmware but never reaches the kernel. The firmware prints "loading kernel" and then stops. List three possible causes and the one test that would distinguish them.
+
+## Limits
+
+This chapter shows a simple boot chain. Real systems have secure boot (verified signatures), multiple firmware stages (ROM → SPL → U-Boot), and complex storage (eMMC, NVMe). The principle — a chain of handoffs from firmware to kernel — is the same.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [OpenSBI](https://github.com/riscv-software-src/opensbi)
-- [RISC-V SBI Specification](https://github.com/riscv-non-isa/riscv-sbi-doc)
-- [Linux Devicetree](https://docs.kernel.org/devicetree/index.html)
-- [Upstream Linux source](https://github.com/torvalds/linux)
+- [RISC-V Boot Protocol](https://docs.riscv.org/reference/isa/priv/priv-index.html)
+- [Linux Boot](https://docs.kernel.org/admin-guide/boot.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- After power-on and before Linux starts, the reset vector, ROM, firmware, and boot stages prepare the CPU and the platform.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess unknown details; look them up in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 23, Chapter 25

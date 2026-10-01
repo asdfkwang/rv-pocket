@@ -5,81 +5,81 @@
 
 ## Why This Matters
 
-Even a single file read is end-to-end I/O connecting the VFS, page cache, filesystem, block layer, storage driver, DMA, and IRQ. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Data that matters must survive reboot. The I/O path — from `write()` in a program to bytes on a storage device — is the most complex path in the system. It crosses user space, kernel space, page cache, block layer, device driver, and hardware. Understanding it is understanding why data is fast, slow, safe, or lost.
 
 ## Core Idea
 
-Even a single file read is end-to-end I/O connecting the VFS, page cache, filesystem, block layer, storage driver, DMA, and IRQ.
+A `write()` system call does not write to disk. It copies data to the **page cache** (kernel memory) and returns. The data is flushed to disk later by the **block layer** and the **device driver**. This buffering makes writes fast but introduces the risk of data loss on crash. `fsync` forces the data to stable storage.
 
-On a page cache hit it can finish without any hardware I/O; on a miss the task may sleep and wait for controller DMA and the completion interrupt.
-
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
-
-## Small Example
+## Worked Example
 
 ```text
-read(fd,buf,4096)
-→ VFS/fs
-→ page-cache miss
-→ block I/O
-→ storage DMA
-→ IRQ
-→ wake/read return
+Program: write(fd, "A", 1)
+  → Kernel: copy "A" to page cache
+  → Return to program (fast!)
+
+Later:
+  → Block layer: schedule write to disk
+  → Driver: program the storage device
+  → Device: write bytes to flash
+  → Interrupt: write complete
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+The program's `write` returned long before the byte reached disk. `fsync` waits for the interrupt.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the storage device (eMMC, SSD, NVMe) has its own controller and cache. Data may be in the device's cache, not on the flash.
+- **RISC-V:** the CPU programs the storage controller via MMIO or DMA.
+- **OS:** the OS manages the page cache, block layer, and I/O scheduling.
+- **Linux/driver:** the storage driver handles the device-specific protocol and DMA.
 
-The storage controller provides a command queue, a DMA engine, and interrupts.
+## When It Fails
 
-### In RISC-V
-
-The CPU executes the syscall and driver code along with DMA ordering.
-
-### Why the OS Cares
-
-The VFS and filesystem turn storage blocks into file and directory abstractions.
-
-### In Linux / Driver
-
-Linux VFS objects and the block/storage subsystems make up the driver path.
-
-## Trace It
-
-1. **Hardware:** The storage controller provides a command queue, a DMA engine, and interrupts.
-2. **RISC-V:** The CPU executes the syscall and driver code along with DMA ordering.
-3. **OS:** The VFS and filesystem turn storage blocks into file and directory abstractions.
-4. **Linux / Driver:** Linux VFS objects and the block/storage subsystems make up the driver path.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A program writes data, calls `fsync`, and the data is safe. But the device has a volatile cache and loses data on power loss. The program thinks the data is safe. The fix: use `fsync` + `fdatasync` + device flush commands, or use a device with power-loss protection.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A program calls `write(fd, "A", 1)`. Where does the data go first?
+   - A) Directly to the storage device
+   - B) To the page cache in kernel memory
+   - C) To the CPU cache
+   - D) To the device driver
+   - Answer: B
+   - Explanation: `write` copies data to the page cache. The data is flushed to disk later by the block layer.
+   > Hint: What makes writes fast? Where is the data before it reaches disk?
 
-1. Compare the read path on a page-cache hit versus a miss, and identify when DMA/IRQ is needed.
-2. Compare the roles of VFS dentries and inodes using the official documentation.
-3. Draw the sleep → IRQ completion → wakeup → schedule path of a task waiting for I/O.
-4. Find one rule or API in the official documentation directly related to **Files, Storage, and the I/O Path**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about the I/O path? Pick all that apply.
+   - A) The page cache buffers writes
+   - B) The block layer schedules I/O
+   - C) The device driver programs the hardware
+   - D) The program's write always waits for the disk
+   - Answer: A, B, C
+   - Explanation: The page cache (A), block layer (B), and driver (C) are all part of the I/O path. The program's write does not wait for the disk (D is false).
+   > Hint: What does the program's write return? When does the data reach disk?
+
+3. A program calls `fsync(fd)`. What does this do?
+   - A) Flush the page cache to disk
+   - B) Close the file
+   - C) Delete the file
+   - D) Check the file for errors
+   - Answer: A
+   - Explanation: `fsync` forces the data in the page cache to stable storage. It does not close or delete the file.
+   > Hint: What does "sync" mean? What is being synchronized?
+
+4. Explain why the page cache makes writes fast — what would happen if every write went directly to disk?
+
+5. A program writes data and calls `fsync`. The system crashes. The data is lost. What is the most likely cause?
+
+## Limits
+
+This chapter shows a simple I/O path. Real systems have I/O schedulers, multipath, RAID, and complex storage protocols. The principle — buffer, schedule, flush — is the same.
 
 ## Go Deeper
 
-- [Linux VFS](https://docs.kernel.org/filesystems/vfs.html)
-- [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Scheduler](https://docs.kernel.org/scheduler/)
-- [Linux Driver API](https://docs.kernel.org/driver-api/)
+- [Linux File Systems](https://docs.kernel.org/filesystems/)
+- [Linux Block Layer](https://docs.kernel.org/block/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Even a single file read is end-to-end I/O connecting the VFS, page cache, filesystem, block layer, storage driver, DMA, and IRQ.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 33, Chapter 35

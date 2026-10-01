@@ -5,77 +5,80 @@
 
 ## Why This Matters
 
-Interrupts, illegal instructions, page faults, and syscalls can all be understood in one trap framework that redirects the normal PC flow to a privileged handler. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Interrupts are hardware events. **Exceptions** are software events — the CPU detects something wrong (invalid instruction, division by zero, page fault) and transfers control to a handler. **System calls** are deliberate exceptions — the program asks the OS for help. All three are **traps**: the CPU saves state and jumps to a handler.
 
 ## Core Idea
 
-Interrupts, illegal instructions, page faults, and syscalls can all be understood in one trap framework that redirects the normal PC flow to a privileged handler.
+A trap has three parts: **cause** (why it happened), **saved PC** (where to return), and **handler address** (where to go). The cause is recorded in a CSR (Control and Status Register). The saved PC is in `mepc` (Machine Exception Program Counter). The handler address is in `mtvec` (Machine Trap Vector). When the trap ends, `mret` restores the saved PC and resumes.
 
-Exceptions are usually synchronous with the current instruction, while interrupts are asynchronous. An ecall is an exception that deliberately requests a kernel service, and a page fault is one the OS may recover from.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+A program executes an invalid instruction:
 
 ```text
-a0=fd, a1=buf, a2=len, a7=syscall_nr
-ecall
-→ kernel handler
-→ return to userspace
+1. CPU detects the invalid instruction, raises an exception
+2. Cause is recorded in mcause (e.g., 2 = illegal instruction)
+3. Current PC is saved in mepc
+4. CPU jumps to the handler address in mtvec
+5. Handler reads mcause, decides what to do (kill the program, emulate, etc.)
+6. Handler executes mret, CPU resumes at mepc
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+A system call is the same mechanism, but the program triggers it deliberately with the `ecall` instruction.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the trap logic is hardwired — detect exception, save state, jump to vector.
+- **RISC-V:** the privileged spec defines `mcause`, `mepc`, `mtvec`, and `mret`. Different causes have different exception codes.
+- **OS:** the OS installs a trap handler at boot. The handler dispatches based on the cause: page fault → allocate page, system call → service request, illegal instruction → kill process.
+- **Linux/driver:** drivers rarely handle traps directly, but page faults in kernel space are fatal (no user process to kill). Understanding traps helps read oops messages.
 
-Trap entry logic records the saved PC and cause, then selects the handler target.
+## When It Fails
 
-### In RISC-V
-
-Ecall, illegal instructions, page/access faults, and interrupts are defined in the privileged ISA.
-
-### Why the OS Cares
-
-The OS applies a policy based on the cause, such as a syscall, a signal, page allocation, or a retry.
-
-### In Linux / Driver
-
-Linux RISC-V entry code passes saved state in pt_regs form to the generic kernel path.
-
-## Trace It
-
-1. **Hardware:** Trap entry logic records the saved PC and cause, then selects the handler target.
-2. **RISC-V:** Ecall, illegal instructions, page/access faults, and interrupts are defined in the privileged ISA.
-3. **OS:** The OS applies a policy based on the cause, such as a syscall, a signal, page allocation, or a retry.
-4. **Linux / Driver:** Linux RISC-V entry code passes saved state in pt_regs form to the generic kernel path.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver accesses a bad pointer in kernel space. The CPU raises a page fault. The OS tries to handle it, but the fault happened in kernel context — there is no user process to kill. The kernel panics. The bug is the bad pointer; the panic is the consequence of being in kernel context.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. A program executes `ecall`. What type of trap is this?
+   - A) Interrupt
+   - B) Exception
+   - C) System call
+   - D) Both B and C
+   - Answer: D
+   - Explanation: `ecall` is a deliberate exception (B) used to make system calls (C). It is not an interrupt — interrupts come from hardware.
+   > Hint: `ecall` is executed by software. What is it for?
 
-1. Explain what the saved PC must point to in order to retry the faulting instruction after handling a page fault.
-2. Explain, in terms of privilege and mapping, why userspace simply jumping to a kernel address differs from a syscall.
-3. Find the exception cause number for a U-mode ecall in the official specification.
-4. Find one rule or API directly related to **Exceptions, Traps, and System Calls** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are recorded when a trap occurs? Pick all that apply.
+   - A) The cause of the trap (mcause)
+   - B) The PC of the trapping instruction (mepc)
+   - C) The handler address (mtvec)
+   - D) All general-purpose registers
+   - Answer: A, B, C
+   - Explanation: The CPU saves the cause, the PC, and uses the handler address. General-purpose registers are NOT automatically saved — the handler must save them if needed.
+   > Hint: What does the hardware save automatically? What must software save?
+
+3. A page fault occurs in kernel space. Why is this more serious than a page fault in user space?
+   - A) Kernel page faults are slower
+   - B) There is no user process to kill — the kernel panics
+   - C) Kernel page faults corrupt hardware
+   - D) Kernel page faults are always caused by hardware bugs
+   - Answer: B
+   - Explanation: A user-space page fault can be handled by killing the process. A kernel-space page fault means the kernel itself accessed an invalid address — there is nothing to fall back to, so the kernel panics.
+   > Hint: What does the OS do with a user process that faults? What happens when the kernel itself faults?
+
+4. Explain the difference between a trap and an interrupt — what is the source of each, and how does the handler know which one occurred?
+
+5. A program divides by zero. Trace the trap: what instruction triggered it, what cause code is recorded, where is the PC saved, and what does the OS handler do?
+
+## Limits
+
+This chapter shows the RISC-V trap mechanism. Other architectures have similar concepts with different names (x86: IDT, exception vectors). The key idea — save state, jump to handler, restore state — is universal.
 
 ## Go Deeper
 
 - [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
-- [Upstream Linux source](https://github.com/torvalds/linux)
-- [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)
+- [Linux Kernel Oops](https://docs.kernel.org/admin-guide/bug-hunting.html)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Interrupts, illegal instructions, page faults, and syscalls can all be understood in one trap framework that redirects the normal PC flow to a privileged handler.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 12, Chapter 14

@@ -5,75 +5,85 @@
 
 ## Why This Matters
 
-Virtual memory translates the virtual addresses used by the CPU into physical addresses and checks permissions. This concept does not stop at one layer. This chapter starts from the smallest example and traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Without virtual memory, every program must fit in physical memory, and one program can corrupt another. **Virtual memory** gives each program its own address space — a private, contiguous range of addresses that the hardware maps to physical memory. The mapping is done by the **MMU** (Memory Management Unit) using **page tables**.
 
 ## Core Idea
 
-Virtual memory translates the virtual addresses used by the CPU into physical addresses and checks permissions.
+Virtual memory divides address space into **pages** (typically 4 KB). Each virtual page maps to a physical page. The mapping is stored in a **page table** — a tree of tables. Sv39 is RISC-V's 39-bit virtual address scheme: 3 levels of page tables, 4 KB pages, 512 entries per table. The MMU walks the table to translate a virtual address to a physical one.
 
-Sv39 uses a multi-level page table and PTE flags. satp points to the translation root, and a bad mapping or permission leads to a page fault.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds what state, and which event changes that state**. Check exact details in `Go Deeper` at the end.
-
-## Small Example
+Sv39 virtual address (39 bits):
 
 ```text
-Process A VA 0x4000→PA 0x9000
-Process B VA 0x4000→PA 0xD000
+| VPN[2] (9 bits) | VPN[1] (9 bits) | VPN[0] (9 bits) | offset (12 bits) |
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when values change and when control crosses into another layer.
+Translation:
 
-## Follow the System
+```text
+1. MMU reads the root page table address from the satp CSR
+2. VPN[2] indexes the root table → physical address of level-1 table
+3. VPN[1] indexes the level-1 table → physical address of level-0 table
+4. VPN[0] indexes the level-0 table → physical page number
+5. Physical page number + offset = physical address
+```
 
-### At the Hardware
+Each step is a memory read. The TLB (Chapter 21) caches the result to avoid the walk.
 
-The MMU and TLB perform translation and permission checks.
+## The Same Idea Elsewhere
 
-### In RISC-V
+- **Hardware:** the MMU is a hardware unit that walks page tables and caches translations in the TLB.
+- **RISC-V:** the privileged spec defines Sv39, the `satp` CSR, and the page table entry format.
+- **OS:** the OS builds and manages page tables. It maps virtual pages to physical pages, sets permissions, and handles page faults.
+- **Linux/driver:** drivers use `get_user_pages` to pin user pages for DMA, or `dma_map_single` to map a kernel buffer for device access.
 
-Sv39 PTEs, satp, and SFENCE.VMA are the core of RISC-V virtual memory.
+## When It Fails
 
-### Why the OS Cares
-
-The OS manages per-process page tables, mappings, protection, and page-fault policy.
-
-### In Linux / Driver
-
-The Linux generic MM combines with the RISC-V page-table implementation.
-
-## Trace It
-
-1. **Hardware:** The MMU and TLB perform translation and permission checks.
-2. **RISC-V:** Sv39 PTEs, satp, and SFENCE.VMA are the core of RISC-V virtual memory.
-3. **OS:** The OS manages per-process page tables, mappings, protection, and page-fault policy.
-4. **Linux / Driver:** The Linux generic MM combines with the RISC-V page-table implementation.
-5. Finally, mark what changes along the path above: values, addresses, PC, task state, registers, or buffer ownership.
+A driver passes a user-space virtual address directly to a device. The device uses the address as a physical address. The DMA engine reads the wrong memory — or nothing. The fix: the driver must use the DMA API to translate the user address to a device-usable address (Chapter 22).
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text, and you may search specifications, docs.kernel.org, and upstream sources.
+1. In Sv39, how many levels of page tables are walked for a 4 KB page?
+   - A) 1
+   - B) 2
+   - C) 3
+   - D) 4
+   - Answer: C
+   - Explanation: Sv39 has 3 levels: root, level-1, and level-0. Each VPN field indexes one level.
+   > Hint: How many VPN fields are in a Sv39 address?
 
-1. Compute the number of page-offset bits in a 4 KiB page.
-2. Find in the specification which fault occurs on a store to a valid PTE without write permission.
-3. Explain with satp/page-table roots why the same VA can map to different PAs in different processes.
-4. Find one rule or API directly related to **Virtual Memory and Sv39** in the official documentation, and explain one condition or exception omitted by this chapter's simplified model.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries from **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are true about virtual memory? Pick all that apply.
+   - A) Each process has its own virtual address space
+   - B) Virtual addresses are translated to physical addresses by the MMU
+   - C) Page tables are stored in physical memory
+   - D) The OS can map the same physical page into multiple virtual address spaces
+   - Answer: A, B, C, D
+   - Explanation: All four are true. Virtual memory provides isolation (A), translation (B), uses physical memory for tables (C), and allows sharing (D).
+   > Hint: What does virtual memory provide? What does the OS do with it?
+
+3. A process accesses a virtual address that is not mapped. What happens?
+   - A) The MMU returns a random physical address
+   - B) The CPU raises a page fault
+   - C) The access is ignored
+   - D) The process is killed immediately
+   - Answer: B
+   - Explanation: An unmapped access causes a page fault. The OS handler decides: map the page, kill the process, or swap in data from disk.
+   > Hint: What does the MMU do when it cannot find a translation?
+
+4. Explain why virtual memory enables process isolation — how does the MMU prevent one process from reading another's memory?
+
+5. A driver receives a user-space pointer and passes it directly to a device for DMA. The device reads garbage. Explain what went wrong and what the driver should have done.
+
+## Limits
+
+This chapter shows Sv39 with 4 KB pages. Sv39 also supports 2 MB and 1 GB pages (superpages) that skip levels of the walk. Real systems also have ASIDs (Address Space Identifiers) to avoid TLB flushes on context switches.
 
 ## Go Deeper
 
-- [RISC-V Privileged Architecture](https://docs.riscv.org/reference/isa/priv/priv-index.html)
+- [RISC-V Privileged Architecture (Sv39)](https://docs.riscv.org/reference/isa/priv/priv-index.html)
 - [Linux Memory Management](https://docs.kernel.org/mm/)
-- [Upstream Linux source](https://github.com/torvalds/linux)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Virtual memory translates the virtual addresses used by the CPU into physical addresses and checks permissions.
-- You may meet the same concept again under different names in hardware and in OS/Linux.
-- Do not guess at details you do not know; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 19, Chapter 21

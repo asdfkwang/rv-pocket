@@ -5,63 +5,81 @@
 
 ## Why This Matters
 
-A computer is not a single CPU; it is a system connecting the CPU, memory, devices, and the software that coordinates them. This concept does not end at one layer. This chapter starts from the smallest example and connects how the same idea reappears in the CPU, the operating system, and Linux drivers.
+A single line like `write(fd, "A", 1)` can print `A` on a screen, save it to a file, or push it out of a serial pin. The line looks the same every time. What happens underneath is completely different each time, and most real bugs live in the gap between "the call looked right" and "the bytes went somewhere unexpected."
 
 ## Core Idea
 
-A computer is not a single CPU; it is a system connecting the CPU, memory, devices, and the software that coordinates them.
+A computer is not one CPU. It is a CPU, memory, devices, and software connected so that a request travels down through layers: program → operating system → driver → register → wire. Every layer holds some state, and every step changes some state.
 
-Even a single line of application code eventually comes down to instructions, syscalls, drivers, registers, and real electrical behavior. That vertical path is the map for this entire book.
+Two words used in this book: a **system call** is the doorway a program knocks on to ask the OS for something (like writing). A **register** is a tiny named storage slot inside the CPU or a device that holds one value the hardware acts on.
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Check the exact specifications in `Go Deeper` at the end.
+## Worked Example
 
-## Small Example
+Print `A` (value 65) to a serial port:
 
 ```text
-Application: write(fd,"A",1)
-→ kernel syscall
-→ UART driver
-→ DATA register
-→ TX pin
+program: write(fd, "A", 1)
+  → OS: find which device fd means
+  → driver: put 65 into the UART DATA register
+  → pin: TX line sends 65 bit by bit
 ```
 
-Tracing this small example on paper yourself matters more than memorizing a long definition. Mark the moment a value changes and the moment control passes to another layer.
+Track the value 65 across the trip: it starts in the program's memory, gets copied into a CPU register, gets stored into the device's DATA register, then leaves as electrical pulses. Same number, four different homes.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the CPU, memory, and the UART device are wired to one bus; the device keeps its own registers regardless of what the CPU is doing.
+- **RISC-V:** the instruction set defines which instructions and registers software may use; it does not describe the UART — that lives in the platform, outside the ISA chapters (05–08).
+- **OS:** the OS owns the mapping from `fd` to device, so two programs can share one UART without tripping over each other.
+- **Linux/driver:** a UART driver turns `write()` into register operations; the same `write()` on a regular file turns into completely different operations.
 
-The CPU, memory, and devices are connected by buses and interrupts, and each device holds its own state.
+## When It Fails
 
-### In RISC-V
-
-The RISC-V ISA defines the instructions and registers that the CPU exposes to software.
-
-### Why the OS Cares
-
-The OS abstracts and protects CPU time, address spaces, files, and devices.
-
-### In Linux / Driver
-
-Linux subsystems and drivers connect hardware-specific details to a common userspace interface.
-
-## Trace It
-
-1. **Hardware:** The CPU, memory, and devices are connected by buses and interrupts, and each device holds its own state.
-2. **RISC-V:** The RISC-V ISA defines the instructions and registers that the CPU exposes to software.
-3. **OS:** The OS abstracts and protects CPU time, address spaces, files, and devices.
-4. **Linux / Driver:** Linux subsystems and drivers connect hardware-specific details to a common userspace interface.
-5. Finally, mark directly what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A program writes `A` and gets no error, but nothing appears on the serial terminal. The natural suspect is "the write failed" — but the write succeeded. What failed is everything after it: the driver stored 65 into the wrong register, or the cable was never connected, or another program reconfigured the port. "No error" only means the top layer accepted the request.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is designed to be harder than the main text, and you may search the specification, docs.kernel.org, and upstream source.
+1. A program runs `write(fd, "A", 1)` where `fd` is a serial port, and `A` appears on the terminal. Which path did the byte take?
+   - A) Program → CPU register → TX pin, the OS is not involved
+   - B) Program → system call → driver → UART DATA register → TX pin
+   - C) Program → file on disk → UART reads the file → TX pin
+   - D) Program → CPU cache → RAM → TX pin
+   - Answer: B
+   - Explanation: A user program cannot touch the pin directly; the system call hands the byte to the driver, and the driver stores it in the device register that feeds the transmitter.
+   > Hint: Ask who is allowed to touch hardware. The program, or the OS on its behalf?
 
-1. Explain why the same read() works on both a regular file and a UART, using the common interface and the different hardware paths.
-2. Summarize which protections and abstractions break when userspace is allowed to control device MMIO directly.
-3. Research and draw, in at least 8 steps, the path by which a single button press wakes a userspace process.
-4. Find one rule or API directly related to **The Computer as a System** in the official documentation, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these change during the trip of `A` above? Pick all that apply.
+   - A) The program's memory holding `"A"`
+   - B) A CPU register carrying 65
+   - C) The UART DATA register
+   - D) The voltage on the TX pin
+   - Answer: B, C, D
+   - Explanation: The program's buffer is only read, never rewritten. The value moves through a CPU register, into the device register, and out as pin voltage — those three change.
+   > Hint: Reading a value does not change it. Follow 65 and mark each home it leaves.
+
+3. The same `read()` call works on a regular file and on a UART, but one evening the UART `read()` never returns while the file `read()` always does. What is the most useful first question?
+   - A) Is the baud rate correct?
+   - B) Is there any byte available to read right now?
+   - C) Is the file descriptor a small number?
+   - D) Is the CPU fast enough?
+   - Answer: B
+   - Explanation: A file `read()` returns whatever is stored, even zero bytes at end of file. A UART `read()` waits for the outside world — no arriving byte means nothing to return. Availability, not speed or settings, is the first split.
+   > Hint: A file holds the past. A UART waits for the future.
+
+4. Two programs open the same serial port. One changes the port speed and the other one's output turns to garbage. Why didn't each program get its own private port?
+   - A) Because both file descriptors point at one shared device with one speed register
+   - B) Because the CPU cache was not flushed
+   - C) Because the programs share the same CPU registers
+   - D) Because the baud rate is stored per process
+   - Answer: A
+   - Explanation: `open()` gives each program its own handle, but both handles lead to the same device and its single speed register. Handles are private; hardware is shared.
+   > Hint: What exactly does each program own after `open()` — the device, or a path to it?
+
+5. Sketch the full path of one button press waking up a sleeping program, in at least 6 steps from finger to running code. Mark every place where some state changes owner (hardware → driver → OS → program).
+
+## Limits
+
+This chapter's model hides interrupts, buffering, baud-rate setup, and flow control — a real UART transfer needs all of them (Chapters 11–12). It also pretends one `write()` equals one transmission; buffering and scheduling can delay or merge bytes.
 
 ## Go Deeper
 
@@ -69,14 +87,6 @@ Linux subsystems and drivers connect hardware-specific details to a common users
 - [Linux Driver API](https://docs.kernel.org/driver-api/)
 - [Upstream Linux source](https://github.com/torvalds/linux)
 
-External documents do not replace this text. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
+## Related
 
-## Key Takeaways
-
-- A computer is not a single CPU; it is a system connecting the CPU, memory, devices, and the software that coordinates them.
-- You may meet the same concept again under different names in hardware and OS/Linux.
-- Do not guess at unknown details; look them up and verify them in the official specifications and upstream documentation.
-
-## Nearby Chapters
-
-Chapter 02
+Chapter 02, Chapter 03

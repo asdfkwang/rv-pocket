@@ -5,76 +5,78 @@
 
 ## Why This Matters
 
-Good system debugging narrows the cause space by collecting observable state at layer boundaries instead of guessing. This concept does not belong to a single layer. This chapter starts with the smallest example and then traces how the same idea reappears in the CPU, the operating system, and Linux drivers.
+Real bugs do not stay in one layer. A symptom in userspace may be caused by a driver bug, a hardware errata, or a misconfigured device tree. Debugging across layers is the skill that separates "I fixed the symptom" from "I fixed the bug." The key is to find the layer where the model breaks.
 
 ## Core Idea
 
-Good system debugging narrows the cause space by collecting observable state at layer boundaries instead of guessing.
+Every layer has a contract: the datasheet describes the hardware, the driver matches the datasheet, the kernel provides the framework, the application uses the API. A bug is a contract violation. To debug, find the layer where the contract breaks: does the hardware match the datasheet? Does the driver match the datasheet? Does the driver match the kernel API? Does the application match the driver API?
 
-The symptom and the root cause can live in different layers. Cross-layer bugs — a race that vanishes when logging is added, a late page fault caused by DMA — require tracking state and timing.
+## Worked Example
 
-On a first reading, do not memorize every exception. Focus only on **who holds which state, and which event changes that state**. Save exact specification details for `Go Deeper` at the end.
-
-## Small Example
+A display shows wrong colors:
 
 ```text
-old frame
-check userspace buffer → kernel buffer → DMA address/descriptor → completion → cache/order → display register
+1. Check application: are the pixel values correct? Yes.
+2. Check driver: does it write the correct values to the framebuffer? Yes.
+3. Check hardware: does the display controller read the correct addresses? Yes.
+4. Check datasheet: does the display expect the same pixel format? No — it expects BGR, not RGB.
 ```
 
-Tracing this small example on paper matters more than memorizing long definitions. Mark the moments when a value changes and when control passes to a different layer.
+The bug is a contract violation between the driver and the hardware: the driver writes RGB, the display expects BGR. The fix: swap the color channels in the driver.
 
-## Follow the System
+## The Same Idea Elsewhere
 
-### At the Hardware
+- **Hardware:** the hardware follows the datasheet (or the errata).
+- **RISC-V:** the CPU follows the ISA.
+- **OS:** the kernel follows its own APIs.
+- **Linux/driver:** the driver follows the datasheet and the kernel API.
 
-A logic analyzer and register dumps provide hardware evidence.
+## When It Fails
 
-### In RISC-V
-
-Trap cause, EPC, and register dumps show the CPU/exception boundary.
-
-### Why the OS Cares
-
-Scheduler state, VM, and wait queues serve as kernel control-flow evidence.
-
-### In Linux / Driver
-
-dmesg, ftrace, tracepoints, dynamic debug, debugfs, and /proc/interrupts are the Linux observation tools.
-
-## Trace It
-
-1. **Hardware:** A logic analyzer and register dumps provide hardware evidence.
-2. **RISC-V:** Trap cause, EPC, and register dumps show the CPU/exception boundary.
-3. **OS:** Scheduler state, VM, and wait queues serve as kernel control-flow evidence.
-4. **Linux / Driver:** dmesg, ftrace, tracepoints, dynamic debug, debugfs, and /proc/interrupts are the Linux observation tools.
-5. Finally, mark what changes along the path above: value, address, PC, task state, registers, or buffer ownership.
+A driver works on one board but not another. The driver assumes a fixed clock frequency. The other board has a different clock. The driver reads the wrong timing and programs the device incorrectly. The fix: read the clock frequency from the device tree, not a hard-coded constant.
 
 ## Check
 
-> **Open book / open web.** The Check section is not a memorization test. It is deliberately harder than the main text; feel free to search specifications, docs.kernel.org, and upstream source.
+1. A display shows wrong colors. The application writes correct pixel values. What is the next step?
+   - A) Check the driver
+   - B) Check the hardware
+   - C) Check the datasheet
+   - D) Check the device tree
+   - Answer: A
+   - Explanation: The application is correct. The next layer is the driver. Check if the driver writes the correct values to the framebuffer.
+   > Hint: Where is the next layer? What does the driver do with the pixel values?
 
-1. Give at least four software/config causes that rule out concluding "hardware fault" from an IRQ count of zero alone.
-2. Make a plan to investigate, in race/order terms, a Heisenbug that disappears when printk is added.
-3. Construct a path by which DMA memory corruption can surface later as an unrelated page fault.
-4. Find one rule or API in the official documentation directly related to **Bugs Across Layers**, and explain one condition or exception that the simplified model in this chapter omits.
-5. Assume this chapter's concept has caused a problem on a real Linux system, pick the relevant boundaries among **hardware → RISC-V → OS → Linux/driver → userspace**, and design what state to observe and which tools to use.
+2. Which of these are contract violations? Pick all that apply.
+   - A) The driver writes to the wrong register offset
+   - B) The application uses the wrong API
+   - C) The hardware does not match the datasheet
+   - D) The kernel does not match the CPU
+   - Answer: A, B, C
+   - Explanation: A is a driver-datasheet violation, B is an application-driver violation, C is a hardware-datasheet violation. D is not a typical violation — the kernel is ported to match the CPU.
+   > Hint: What are the contracts? Which layer violates which?
+
+3. A driver works on one board but not another. Both use the same chip. What is the most likely cause?
+   - A) The driver is not compiled into the kernel
+   - B) The driver assumes a fixed clock frequency
+   - C) The kernel does not support device trees
+   - D) The device is not described in the device tree
+   - Answer: B
+   - Explanation: Different boards may have different clocks. A hard-coded clock frequency works on one board but not another.
+   > Hint: What is different between boards? What does the driver assume?
+
+4. Explain how to debug a cross-layer bug — what is the systematic approach to finding the layer where the contract breaks?
+
+5. A driver works in the lab but fails in the field. The field has a different power supply. What is the most likely cause, and what would you check first?
+
+## Limits
+
+This chapter shows a simple cross-layer bug. Real bugs involve timing, concurrency, and hardware errata. The principle — find the layer where the contract breaks — is the same.
 
 ## Go Deeper
 
-- [Upstream Linux source](https://github.com/torvalds/linux)
-- [Linux Generic IRQ](https://docs.kernel.org/core-api/genericirq.html)
-- [Linux DMA API](https://docs.kernel.org/core-api/dma-api.html)
-- [Linux Kernel Memory Model](https://docs.kernel.org/dev-tools/lkmm/)
+- [Linux Kernel Debugging](https://docs.kernel.org/admin-guide/bug-hunting.html)
+- [Linux Device Drivers, Book](https://lwn.net/Kernel/LDD3/)
 
-External documents do not replace this chapter. Understand the small model first, then go to the original sources when you need exact bit definitions, ABIs, APIs, or corner cases.
-
-## Key Takeaways
-
-- Good system debugging narrows the cause space by collecting observable state at layer boundaries instead of guessing.
-- You may meet the same concept again under different names in hardware and in the OS/Linux.
-- Do not guess at unknown details; look them up and confirm them in the official specifications and upstream documentation.
-
-## Nearby Chapters
+## Related
 
 Chapter 38, Chapter 40
