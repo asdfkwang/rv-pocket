@@ -16,6 +16,7 @@ Style match targets (from assets/logo.png):
   dark + warm back plates, blue left rim / orange right rim, black->transparent bg.
 """
 import bpy
+import bmesh
 import math
 import os
 
@@ -143,13 +144,15 @@ FRONT_Y = -0.35  # Blender front is -Y: controls face the viewer, no mirror
 THICK = 0.75
 
 # ---- back plates (larger, behind) : warm outer + dark inner
-back_outer_main = rounded_box("BackOuter_Main", (0, 0.42, 0.05), (4.55, THICK, 3.3), bevel_w=0.28)
-back_outer_wing = rounded_box("BackOuter_Wing", (1.75, 0.42, -0.45), (1.75, THICK, 1.95), bevel_w=0.28)
-back_dark_main = rounded_box("BackDark_Main", (0, 0.20, 0.03), (4.38, THICK, 3.15), bevel_w=0.25)
-back_dark_wing = rounded_box("BackDark_Wing", (1.68, 0.20, -0.44), (1.68, THICK, 1.88), bevel_w=0.25)
-for o in (back_outer_main, back_outer_wing):
+# They must extend past the cream shell on EVERY side, including the wing at
+# the lower right and the notch under it, or the recess under the step shows
+# the dark plate and reads as a hole.
+back_outer_main = rounded_box("BackOuter_Main", (0, 0.42, 0.05), (4.62, THICK, 3.3), bevel_w=0.28)
+back_dark_main = rounded_box("BackDark_Main", (0, 0.20, 0.03), (4.46, THICK, 3.15), bevel_w=0.25)
+back_outer_wing = back_dark_wing = None
+for o in (back_outer_main,):
     set_mat(o, mat_back_warm); link(o, col_ext)
-for o in (back_dark_main, back_dark_wing):
+for o in (back_dark_main,):
     set_mat(o, mat_back_dark); link(o, col_ext)
 
 # ---- screen metrics. Front is -Y, so a SMALLER y is further out.
@@ -174,17 +177,15 @@ GLASS_FRONT = SHELL_FRONT + 0.075    # glass face sits behind the cream lip
 # front of the glass; anything larger gets hidden inside it.
 LED_Y = GLASS_FRONT - GLASS_D / 2.0 - 0.022
 
-# ---- front cream shell : main + right wing overlap (no boolean, clean + editable)
-front_main = rounded_box("Body_Main", (0, 0, 0), (4.2, THICK, 3.0),
+# ---- front cream shell
+# One box. The reference logo is a single rounded slab whose right edge simply
+# reads as a wing; a separate wing block or a hand-built L-shaped outline only
+# introduces seams, gaps, and winding bugs. Everything (screen, buttons, pads)
+# mounts on this one front plane.
+front_main = rounded_box("Body_Shell", (0, 0, 0), (4.30, THICK, 3.0),
                          bevel_w=0.30, bevel_seg=8)
-# The wing overlaps the main shell to the right and sits slightly in front of
-# it, so the two blend instead of leaving a gap that exposes the darker back
-# plate. Its front plane defines CTL_FRONT for the buttons mounted on it.
-front_wing = rounded_box("Body_Wing", (1.62, -0.09, -0.42), (1.62, THICK, 1.85),
-                         bevel_w=0.30, bevel_seg=8)
-WING_FRONT = -0.09 - THICK / 2.0      # -0.465
-for o in (front_main, front_wing):
-    set_mat(o, mat_cream); link(o, col_ext)
+set_mat(front_main, mat_cream); link(front_main, col_ext)
+front_wing = None
 
 # ---- screen opening through the shell front
 _cut_len = RECESS_OUT + RECESS_DEPTH
@@ -203,9 +204,8 @@ _cb.profile = 0.7
 cutter.hide_render = True
 cutter.display_type = "WIRE"
 
-# Only the main shell gets the cut. Body_Wing sits to the right of the screen
-# and never overlaps the opening, so cutting it would punch a hole in the
-# button area.
+# Only the main shell gets the screen cut. Body_Wing sits to the right and
+# never overlaps the opening, so cutting it would punch a hole in the buttons.
 for _shell in (front_main,):
     _m = _shell.modifiers.new("ScreenOpening", "BOOLEAN")
     _m.operation = "DIFFERENCE"
@@ -323,10 +323,10 @@ for _i, _dx in enumerate((-0.17, 0.0, 0.17)):
 
 # ---- controls. They may stand slightly proud of SHELL_FRONT but must stay
 # ---- inside the shell outline and clear of the screen.
-# Buttons on the wing must clear the wing's own front face (WING_FRONT), which
-# sits further forward than the main shell face.
-CTL_FRONT_MAIN = SHELL_FRONT - 0.05    # D-pad / pills
-CTL_FRONT_WING = WING_FRONT - 0.05      # red buttons
+WING_FRONT = SHELL_FRONT
+CTL_FRONT = SHELL_FRONT - 0.05   # control face plane (wing is at the same depth)
+CTL_FRONT_MAIN = CTL_FRONT      # D-pad / pills
+CTL_FRONT_WING = CTL_FRONT      # red buttons
 CTL_D = 0.24                    # control depth along Y
 
 def ctl_bar(name, x, z, sx, sz, front=CTL_FRONT_MAIN):
@@ -382,8 +382,8 @@ def red_btn(name, x, z):
     set_mat(cap, mat_red); link(cap, col_ctl)
     return o
 
-red_btn("Btn_Red_A", 1.42, -0.34)   # lower
-red_btn("Btn_Red_B", 1.76, 0.22)    # upper
+red_btn("Btn_Red_A", 1.28, -0.55)   # lower
+red_btn("Btn_Red_B", 1.62, 0.05)    # upper
 
 # ---- speaker slits: recessed into the shell, never proud of it
 def slit(name, z):
