@@ -113,7 +113,7 @@ mat_pcb = principled("Mat_PCB", base=(0.05, 0.28, 0.16, 1.0), rough=0.6)
 mat_cpu = principled("Mat_CPU", base=(0.12, 0.12, 0.14, 1.0), rough=0.3, metallic=0.7)
 
 # ---------------------------------------------------------------- helpers
-def rounded_box(name, loc, size, bevel_w=0.22, bevel_seg=4, subdiv=2):
+def rounded_box(name, loc, size, bevel_w=0.22, bevel_seg=6, subdiv=0):
     bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
     o = bpy.context.active_object
     o.name = name
@@ -124,9 +124,11 @@ def rounded_box(name, loc, size, bevel_w=0.22, bevel_seg=4, subdiv=2):
     b.segments = bevel_seg
     b.profile = 0.7
     b.limit_method = "ANGLE"
-    s = o.modifiers.new("Subdiv", "SUBSURF")
-    s.levels = subdiv
-    s.render_levels = 3  # high for master blend reuse
+    b.harden_normals = False
+    if subdiv:
+        s = o.modifiers.new("Subdiv", "SUBSURF")
+        s.levels = subdiv
+        s.render_levels = 3  # high for master blend reuse
     for p in o.data.polygons:
         p.use_smooth = True
     return o
@@ -150,24 +152,78 @@ for o in (back_outer_main, back_outer_wing):
 for o in (back_dark_main, back_dark_wing):
     set_mat(o, mat_back_dark); link(o, col_ext)
 
+# ---- screen metrics. Front is -Y, so a SMALLER y is further out.
+# The cream shell is the cover, but it is opaque: without a real opening the
+# glass is either buried (invisible) or sitting on top (reads as a slab).
+# So the shell gets an actual boolean opening and the glass is seated in it,
+# behind the cream lip.
+SHELL_FRONT = -THICK / 2.0            # -0.375
+SX, SZ = -0.45, 0.55
+OPEN_W, OPEN_H = 1.80, 1.14           # opening cut in the shell
+# The recess must start outside the shell face (so the cut is clean) and reach
+# far enough back to swallow the glass. Front view is -Y, so more negative is
+# further out.
+RECESS_OUT = 0.10                     # cutter overshoot past the shell face
+RECESS_DEPTH = 0.30                   # how deep the recess goes in
+GLASS_W, GLASS_H = 1.90, 1.24         # wider than the opening, so the cream
+                                     # lip overlaps the glass edge
+GLASS_D = 0.14
+GLASS_FRONT = SHELL_FRONT + 0.075    # glass face sits behind the cream lip
+# The glass is centred at GLASS_FRONT, so its front face is at
+# GLASS_FRONT - GLASS_D/2. LEDs must sit at a SMALLER y than that to be in
+# front of the glass; anything larger gets hidden inside it.
+LED_Y = GLASS_FRONT - GLASS_D / 2.0 - 0.022
+
 # ---- front cream shell : main + right wing overlap (no boolean, clean + editable)
-front_main = rounded_box("Body_Main", (0, 0, 0), (4.2, THICK, 3.0), bevel_w=0.24)
-front_wing = rounded_box("Body_Wing", (1.62, 0, -0.42), (1.62, THICK, 1.85), bevel_w=0.24)
+front_main = rounded_box("Body_Main", (0, 0, 0), (4.2, THICK, 3.0),
+                         bevel_w=0.30, bevel_seg=8)
+# The wing overlaps the main shell to the right and sits slightly in front of
+# it, so the two blend instead of leaving a gap that exposes the darker back
+# plate. Its front plane defines CTL_FRONT for the buttons mounted on it.
+front_wing = rounded_box("Body_Wing", (1.62, -0.09, -0.42), (1.62, THICK, 1.85),
+                         bevel_w=0.30, bevel_seg=8)
+WING_FRONT = -0.09 - THICK / 2.0      # -0.465
 for o in (front_main, front_wing):
     set_mat(o, mat_cream); link(o, col_ext)
 
-# ---- screen assembly. Front is -Y, so a SMALLER y is further out.
-# Physical logic: glass sits in a recess, and a dark bezel frame overlaps its
-# edge and stands slightly proud of the shell. The cover must never end up
-# behind the glass, and the glass must never poke out past the shell.
-SHELL_FRONT = -THICK / 2.0          # outer shell front plane
-BEZEL_FRONT = SHELL_FRONT - 0.045    # bezel lip stands 0.045 proud of the shell
-GLASS_FRONT = SHELL_FRONT - 0.012    # glass recessed behind the bezel lip
+# ---- screen opening through the shell front
+_cut_len = RECESS_OUT + RECESS_DEPTH
+bpy.ops.mesh.primitive_cube_add(
+    size=1,
+    location=(SX, SHELL_FRONT - RECESS_OUT + _cut_len / 2.0, SZ))
+cutter = bpy.context.active_object
+cutter.name = "_ScreenCutter"
+cutter.dimensions = (OPEN_W, _cut_len, OPEN_H)
+bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+_cb = cutter.modifiers.new("Bevel", "BEVEL")
+_cb.width = 0.09
+_cb.segments = 3
+_cb.profile = 0.7
+# the cutter must never render or appear in the file
+cutter.hide_render = True
+cutter.display_type = "WIRE"
 
-SX, SZ = -0.45, 0.55                # screen centre
-GLASS_W, GLASS_H = 1.94, 1.28
-BEZ_T = 0.18                        # bezel border width
-BEZ_D = 0.30                        # bezel depth along Y
+# Only the main shell gets the cut. Body_Wing sits to the right of the screen
+# and never overlaps the opening, so cutting it would punch a hole in the
+# button area.
+for _shell in (front_main,):
+    _m = _shell.modifiers.new("ScreenOpening", "BOOLEAN")
+    _m.operation = "DIFFERENCE"
+    _m.object = cutter
+    _m.solver = "EXACT"
+    # Order must be Bevel -> Boolean -> CutBevel.
+    # Rounding the outer form first and cutting afterwards keeps the opening
+    # rectangular. Subsurf is deliberately NOT used here: it drags the new cut
+    # vertices toward the surrounding faces and collapses the opening into a
+    # teardrop. The cut edges get their own narrow bevel instead.
+    _cut_bevel = _shell.modifiers.new("CutBevel", "BEVEL")
+    _cut_bevel.width = 0.035
+    _cut_bevel.segments = 3
+    _cut_bevel.profile = 0.6
+    _cut_bevel.limit_method = "ANGLE"
+    _cut_bevel.angle_limit = 0.5236      # 30 deg: only the new cut edges
+    for _i, _nm in enumerate(("Bevel", "ScreenOpening", "CutBevel")):
+        _shell.modifiers.move(_shell.modifiers.find(_nm), _i)
 
 def block(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, col=None, sub=2):
     bpy.ops.mesh.primitive_cube_add(size=1, location=(x, y, z))
@@ -192,11 +248,25 @@ def block(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, col=None, sub=2):
 
 # The cream shell itself is the cover: the glass sits in a recess and the
 # shell surface wraps around its edge. No separate bezel frame.
-block("Screen_Glass", SX, GLASS_FRONT + 0.09, SZ,
-      GLASS_W, 0.18, GLASS_H, mat_screen, 0.09)
+# The glass must sit INSIDE the cut, not behind it: its front face has to be
+# near the shell front plane or the opening just shows the cream interior.
+bpy.ops.mesh.primitive_cube_add(size=1, location=(SX, GLASS_FRONT, SZ))
+glass = bpy.context.active_object
+glass.name = "Screen_Glass"
+glass.dimensions = (GLASS_W, GLASS_D, GLASS_H)
+bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+b = glass.modifiers.new("Bevel", "BEVEL")
+b.width = 0.05
+b.segments = 3
+b.profile = 0.6
+for p in glass.data.polygons:
+    p.use_smooth = True
+set_mat(glass, mat_screen)
+link(glass, col_scr)
 
 # screen glare: thin diagonal white plane, low alpha for that glossy logo streak
-bpy.ops.mesh.primitive_plane_add(size=1, location=(SX + 0.5, GLASS_FRONT - 0.03, SZ + 0.3))
+bpy.ops.mesh.primitive_plane_add(
+    size=1, location=(SX + 0.5, GLASS_FRONT - GLASS_D / 2.0 - 0.004, SZ + 0.3))
 glare = bpy.context.active_object
 glare.name = "Screen_Glare"
 glare.scale = (0.22, 1.0, 0.7)
@@ -218,35 +288,49 @@ else:
     glare.data.materials.append(mat_glare)
 link(glare, col_scr)
 
-# ---- pixel smile (lime) : sits ON the recessed glass, not in front of it
-PIX_Y = GLASS_FRONT - 0.04
-def pixel(name, x, z, sx=0.16, sz=0.16):
+# ---- pixel smile (lime)
+# Each LED is its own cube placed on a PITCH grid, and is PITCH - GAP wide, so
+# adjacent LEDs keep a visible dark seam. A solid multi-unit bar reads as one
+# glowing slab instead of a row of LEDs.
+PITCH = 0.17
+GAP = 0.026
+LED = PITCH - GAP
+PIX_Y = LED_Y
+
+def led(name, x, z):
     bpy.ops.mesh.primitive_cube_add(size=1, location=(x, PIX_Y, z))
     o = bpy.context.active_object
     o.name = name
-    o.dimensions = (sx, 0.06, sz)
+    o.dimensions = (LED, 0.05, LED)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    bv = o.modifiers.new("Bevel", "BEVEL"); bv.width = 0.02; bv.segments = 2
-    set_mat(o, mat_pixel); link(o, col_scr)
+    bv = o.modifiers.new("Bevel", "BEVEL")
+    bv.width = 0.012
+    bv.segments = 2
+    set_mat(o, mat_pixel)
+    link(o, col_scr)
     return o
 
-# Pixel grid: 1 unit = 0.17. Every element is placed on that grid so the gaps
-# between LEDs stay visible. Cheeks and mouth used to overlap vertically and
-# merge into one blob; keep at least one unit of clearance everywhere.
-U = 0.17
-pixel("PX_Eye_L", SX - 0.60, SZ + 0.31, sx=U, sz=U * 3.0)
-pixel("PX_Eye_R", SX + 0.60, SZ + 0.31, sx=U, sz=U * 3.0)
-pixel("PX_Cheek_L", SX - 0.27, SZ - 0.09, sx=U, sz=U)
-pixel("PX_Cheek_R", SX + 0.27, SZ - 0.09, sx=U, sz=U)
-pixel("PX_Mouth", SX, SZ - 0.36, sx=U * 3.0, sz=U)
+# eyes: 3 units stacked vertically on each side
+for _i, _dz in enumerate((0.085, -0.085, -0.255)):
+    led("PX_Eye_L%d" % _i, SX - 0.595, SZ + 0.34 + _dz)
+    led("PX_Eye_R%d" % _i, SX + 0.595, SZ + 0.34 + _dz)
+# cheeks: single units
+led("PX_Cheek_L", SX - 0.255, SZ - 0.085)
+led("PX_Cheek_R", SX + 0.255, SZ - 0.085)
+# mouth: 3 units in a row
+for _i, _dx in enumerate((-0.17, 0.0, 0.17)):
+    led("PX_Mouth%d" % _i, SX + _dx, SZ - 0.255)
 
 # ---- controls. They may stand slightly proud of SHELL_FRONT but must stay
 # ---- inside the shell outline and clear of the screen.
-CTL_FRONT = SHELL_FRONT - 0.05   # control face plane
+# Buttons on the wing must clear the wing's own front face (WING_FRONT), which
+# sits further forward than the main shell face.
+CTL_FRONT_MAIN = SHELL_FRONT - 0.05    # D-pad / pills
+CTL_FRONT_WING = WING_FRONT - 0.05      # red buttons
 CTL_D = 0.24                    # control depth along Y
 
-def ctl_bar(name, x, z, sx, sz):
-    return block(name, x, CTL_FRONT + CTL_D / 2.0, z, sx, CTL_D, sz,
+def ctl_bar(name, x, z, sx, sz, front=CTL_FRONT_MAIN):
+    return block(name, x, front + CTL_D / 2.0, z, sx, CTL_D, sz,
                  mat_dpad, 0.06, seg=3, col=col_ctl)
 
 # D-pad: left column, below the screen
@@ -256,7 +340,7 @@ ctl_bar("DPad_V", -1.52, -0.62, 0.28, 0.86)
 # 2 pill buttons: centre bottom
 def pill(name, x, z):
     bpy.ops.mesh.primitive_cylinder_add(radius=0.15, depth=CTL_D,
-                                        location=(x, CTL_FRONT + CTL_D / 2.0, z),
+                                        location=(x, CTL_FRONT_MAIN + CTL_D / 2.0, z),
                                         rotation=(math.radians(90), 0, 0))
     o = bpy.context.active_object
     o.name = name
@@ -275,7 +359,7 @@ pill("Btn_Pill_R", 0.02, -0.72)
 # 2 red dome buttons: right, diagonal. Kept inside the shell (x < 1.9)
 def red_btn(name, x, z):
     bpy.ops.mesh.primitive_cylinder_add(radius=0.28, depth=0.16,
-                                        location=(x, CTL_FRONT + 0.06, z),
+                                        location=(x, CTL_FRONT_WING + 0.06, z),
                                         rotation=(math.radians(90), 0, 0))
     o = bpy.context.active_object
     o.name = name
@@ -288,7 +372,7 @@ def red_btn(name, x, z):
 
     # dome cap: front half of a squashed sphere, sitting on the cylinder rim
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.255, segments=48, ring_count=24,
-                                         location=(x, CTL_FRONT + 0.075, z))
+                                         location=(x, CTL_FRONT_WING + 0.075, z))
     cap = bpy.context.active_object
     cap.name = name + "_Dome"
     cap.scale = (1.0, 0.55, 1.0)
@@ -391,12 +475,13 @@ mat_halo_in = halo_mat("Mat_HaloIn", 0.80)
 mat_halo_out = halo_mat("Mat_HaloOut", 0.93)
 for _px in [o for o in list(col_scr.objects) if o.name.startswith("PX_")]:
     # halo must stay small: a wide halo fills the gaps and merges the LEDs
-    for _i, (_s, _m) in enumerate(((1.12, mat_halo_in), (1.26, mat_halo_out))):
+    for _i, (_s, _m) in enumerate(((1.08, mat_halo_in), (1.18, mat_halo_out))):
         _h = _px.copy()
         _h.data = _px.data.copy()
         _h.name = _px.name + "_Halo%d" % _i
         _h.scale = (_s, 1.0, _s)
-        _h.location = (_px.location[0], _px.location[1] + 0.012 * (_i + 1), _px.location[2])
+        # push halos BEHIND the LED so the dark seam between units stays open
+        _h.location = (_px.location[0], _px.location[1] + 0.010 * (_i + 1), _px.location[2])
         try:
             _h.visible_shadow = False
         except Exception:
