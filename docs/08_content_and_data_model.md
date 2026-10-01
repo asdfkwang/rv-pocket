@@ -1,10 +1,14 @@
 # Content and Data Model
 
-## Canonical Chapter contract
+> Direction: the game unit is an **Episode** (plus a **Prologue** opening), and the Manual unit is a separate **Manual Chapter** with its own numbering. The two numberings have no 1:1 relationship. An episode will reference Manual Chapters through `recommendedManualChapters`, not by owning manual/quiz content directly.
+>
+> TODO: the runtime still implements `Chapter<State>` with embedded `manual`/`quiz`. Migrate the runtime (`Chapter` → `Episode`, `mission` → problem/objective/result, embedded manual/quiz → `recommendedManualChapters`) in a separate code migration. Do not mix the two migrations.
+
+## Canonical Episode contract
 
 This is the only Chapter schema in the documentation. Use the name `Chapter<State>` consistently; the earlier `ChapterDefinition` sketches are superseded. When implemented, its TypeScript home will be `src/chapters/types.ts`. That file does not exist yet.
 
-The contract covers the actual needs of Chapters 00 and 01. Add an object, panel, or content form when a later mission needs it; do not prebuild a generic content engine.
+The contract covers the actual needs of the Prologue and Episode 01. Add an object, panel, or content form when a later episode needs it; do not prebuild a generic content engine.
 
 ```ts
 export type WorkbenchObjectId =
@@ -29,19 +33,18 @@ export interface QuizQuestion {
   explanation: string;
 }
 
-export interface Chapter<State> {
+export type ManualChapterId = string;
+
+export interface Episode<State> {
   id: number;
   slug: string;
   title: string;
-  mission: {
-    summary: string;
-    initialObservation: string;
-    successMessage: string;
-  };
+  problem: string;
+  objective: string;
+  result: string;
   workbench: { objects: readonly WorkbenchObjectId[] };
   computer: { panels: readonly ComputerPanelId[] };
-  manual: readonly ManualSection[];
-  quiz: readonly QuizQuestion[];
+  recommendedManualChapters: readonly ManualChapterId[];
   createInitialState: () => State;
   successCondition: (state: Readonly<State>) => boolean;
 }
@@ -51,19 +54,19 @@ Definitions are plain TypeScript objects with two small functions, not serialize
 
 ## Field semantics and lifecycle
 
-- `id` is the game chapter number (`1` displays as Chapter 01); `slug` is a stable readable identifier. IDs and slugs are unique. Neither uses a Study Module number.
-- `mission` owns the initial repair objective, observed malfunction, and completion message. Views display these before offering explanations.
-- `workbench` and `computer` select the shared objects and panels that exist for this chapter. Their IDs map to explicit view code, not arbitrary executable content.
-- `manual` contains the reference sections. `quiz` is rendered inside the Manual view, not on a separate required screen. Question/choice IDs are unique within their containing list and `answerId` must match a choice.
-- `createInitialState()` replaces the old `initialState: unknown` sketch. It returns fresh mutable mission state, including fresh nested arrays/objects if present, on chapter entry or Reset. Do not share a mutable initial-state object between attempts.
-- `successCondition` is a pure predicate on the active mission state. Reevaluate it after simulation actions; do not maintain a separate completion flag that can drift from hardware state.
-- Navigation state and quiz-answer UI state are separate from machine state. View changes preserve the active attempt; chapter entry and Reset clear its transient state, including quiz answers. See [navigation behavior](02_ui_ux.md#state-and-navigation-behavior).
+- `id` is the game episode number (`1` displays as Episode 01); `slug` is a stable readable identifier. IDs and slugs are unique. Neither uses a Study Module or Manual Chapter number.
+- `problem` states the observed malfunction, `objective` the concrete repair goal, and `result` the observable outcome of a successful repair. Views display these before offering explanations.
+- `workbench` and `computer` select the shared objects and panels that exist for this episode. Their IDs map to explicit view code, not arbitrary executable content.
+- `recommendedManualChapters` lists the Manual Chapters that help with this episode. It is a recommendation, not a gate: a player can attempt the repair without opening them.
+- `createInitialState()` replaces the old `initialState: unknown` sketch. It returns fresh mutable episode state, including fresh nested arrays/objects if present, on episode entry or Reset. Do not share a mutable initial-state object between attempts.
+- `successCondition` is a pure predicate on the active episode state. Reevaluate it after simulation actions; do not maintain a separate completion flag that can drift from hardware state.
+- Navigation state and quiz-answer UI state are separate from machine state. View changes preserve the active attempt; episode entry and Reset clear its transient state, including quiz answers. See [navigation behavior](02_ui_ux.md#state-and-navigation-behavior).
 
-Chapter 00 uses the same shape with interface-help Manual content, an empty quiz, and no simulated hardware requirement. Its transient state can record the Start action as onboarding completion. Later chapters initialize earlier repairs as already working, so each mission can be entered directly.
+The Prologue uses the same shape with interface-help Manual content, an empty quiz, and no simulated hardware requirement. Its transient state can record the Start action as onboarding completion. Later episodes initialize earlier repairs as already working, so each repair can be entered directly.
 
-## Chapter 01 state and completion
+## Episode 01 state and completion
 
-The [mission script](03_chapter_roadmap.md#chapter-01--is-anyone-there) owns the prose and quiz content. Its smallest machine state is:
+The [episode script](03_episode_roadmap.md#episode-01--output-in-the-wrong-place) owns the prose and quiz content. Its smallest machine state is:
 
 ```ts
 export interface UartMissionState {
@@ -81,8 +84,8 @@ export const isUartMissionComplete = (
 ): boolean => state.uartConnected && state.terminalOutput.includes("A");
 ```
 
-The Chapter 01 definition has type `Chapter<UartMissionState>`, uses these functions for `createInitialState` and `successCondition`, includes all four Workbench objects, and enables `terminal` and `uart-task` panels. It contains one short Manual section and the three questions from the mission script.
+The Episode 01 definition has type `Episode<UartMissionState>`, uses these functions for `createInitialState` and `successCondition`, includes all four Workbench objects, and enables `terminal` and `uart-task` panels. It recommends the Manual Chapters covering the machine overview and serial communication, and keeps the three questions from the episode script.
 
 Only received board UART data belongs in `terminalOutput`; UI hints, errors, and host-local echo must not enter it. Connecting the cable changes only `uartConnected`. Running the supplied diagnostic with the valid UART choice appends `A` only when connected. A missing cable or wrong choice gives explanatory UI feedback without satisfying completion.
 
-The guided choice itself is view interaction state, not a CPU register or program. No PC, RAM array, CSR, or instruction engine belongs in this chapter's state. The [technical architecture](05_technical_architecture.md#content-state-and-simulation-boundaries) owns the action/simulation boundary.
+The guided choice itself is view interaction state, not a CPU register or program. No PC, RAM array, CSR, or instruction engine belongs in this episode's state. The [technical architecture](05_technical_architecture.md#content-state-and-simulation-boundaries) owns the action/simulation boundary.

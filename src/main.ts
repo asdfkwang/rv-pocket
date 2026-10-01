@@ -8,10 +8,10 @@ import { escapeHtml as e, viewLabels } from "./views/html";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
 const tourSteps = [
-  { target: "chapter-select", title: "Chapters", body: "Switch chapters here. Each chapter is one repair." },
+  { target: "chapter-select", title: "Episodes", body: "Switch episodes here. Each episode is one repair." },
   { target: "open-station", title: "STATION", body: "Work on the machine here: inspect the device, connect the cable, run diagnostics." },
-  { target: "open-manual", title: "BOOK", body: "The old manual. Check it whenever something is unclear." },
-  { target: "start-chapter", title: "Start Chapter 01", body: "Ready? Begin the first repair." },
+  { target: "open-manual", title: "EBOOK", body: "The old manual. Check it whenever something is unclear." },
+  { target: "start-chapter", title: "Start Episode 01", body: "Ready? Begin the first repair." },
 ] as const;
 const initial = parseRoute(location.hash);
 let state = createAppState(initial.route);
@@ -26,16 +26,16 @@ function render() {
   const focusId = document.activeElement instanceof HTMLElement ? document.activeElement.id : "";
   const chapter = currentChapter(state);
   const complete = missionComplete(state);
-  document.title = `Chapter ${String(chapter.id).padStart(2, "0")} — ${chapter.title} | RV Pocket`;
+  document.title = `${chapter.id === 0 ? "Prologue" : `Episode ${String(chapter.id).padStart(2, "0")}`} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">CHAPTER</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${String(item.id).padStart(2, "0")} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset chapter <span aria-hidden="true">↺</span></button></div>
+    <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
-      ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Chapter 02 — Bad Memory.</p></div></section>` : ""}
+      ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Episode 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
       <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderManual(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Chapter 01 <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
       <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
@@ -76,7 +76,7 @@ window.addEventListener("hashchange", () => {
   routeNotice = parsed.notice;
   canonicalizeRoute();
   render();
-  announce(routeNotice || `Chapter ${state.active.id}: ${currentChapter(state).title}. ${viewLabels[state.view]} view.`);
+  announce(routeNotice || `${state.active.id === 0 ? "Prologue" : `Episode ${state.active.id}`}: ${currentChapter(state).title}. ${viewLabels[state.view]} view.`);
 });
 
 app.addEventListener("click", (event) => {
@@ -97,7 +97,7 @@ app.addEventListener("click", (event) => {
       if (state.active.id === 0) state.ui.tourStep = 0;
       render();
       document.getElementById("main-content")?.focus();
-      announce("Got it. Two buttons: Station, Book.");
+      announce("Got it. Two buttons: Station, Ebook.");
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;
@@ -139,7 +139,7 @@ app.addEventListener("click", (event) => {
     }
     case "reset":
       state = resetMission(state);
-      state.ui.feedback = "Chapter reset. You are starting fresh in the same view.";
+      state.ui.feedback = "Episode reset. You are starting fresh in the same view.";
       break;
     default: return;
   }

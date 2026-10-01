@@ -6,9 +6,9 @@ The player's parents ran a small game company that went bankrupt. They left behi
 
 The player investigates and repairs the machine until it becomes a functioning Linux-based game device. Each repair should make low-level hardware behavior tangible and give the player a reason to care about the next subsystem.
 
-## Mission-first design
+## Problem-first design
 
-Every repair chapter begins with a malfunction or concrete repair objective:
+Every repair episode begins with a malfunction or concrete repair objective:
 
 1. Present the broken behavior.
 2. Let the player inspect and experiment.
@@ -17,15 +17,15 @@ Every repair chapter begins with a malfunction or concrete repair objective:
 5. Let the player apply the idea through the Computer or Workbench.
 6. Show a visible or measurable improvement.
 
-This is an intended learning loop, not a forced screen sequence. The Manual remains available throughout the mission; knowing players can attempt the repair directly. Success depends on the repaired machine, not on opening the Manual or passing a quiz first. See [learning design](04_learning_design.md) for quiz policy.
+This is an intended learning loop, not a forced screen sequence. The Manual remains available throughout the episode; knowing players can attempt the repair directly. Success depends on the repaired machine, not on opening the Manual or passing a quiz first. See [learning design](04_learning_design.md) for quiz policy.
 
-Chapter 00 is the explicit exception: it introduces the story and interface, with no hardware lesson, quiz, or repair requirement.
+The Prologue is the explicit exception: it introduces the story and interface, with no hardware lesson, quiz, or repair requirement.
 
 ## Hardware before software
 
 Introduce behavior before its abstraction: observation → explanation → software interaction. A player first sees polling consume work, then learns why an interrupt helps; first sees stale DMA data, then learns why cache maintenance is needed.
 
-The [roadmap](03_chapter_roadmap.md) owns the exact order and scope. Its broad progression is diagnostic access → repaired bare-metal hardware → a playable bare-metal game → OS foundations → Linux boot → restored Linux hardware support.
+The [roadmap](03_episode_roadmap.md) owns the exact order and scope. Its broad progression is diagnostic access → repaired bare-metal hardware → a playable bare-metal game → OS foundations → Linux boot → restored Linux hardware support.
 
 ## Rewards and priorities
 
@@ -33,12 +33,12 @@ Every repair must have an observable payoff: the first UART character, passing R
 
 When scope or schedule is constrained, prioritize:
 
-1. Mission clarity.
+1. Problem clarity.
 2. Interaction quality.
 3. Hardware learning value.
 4. Immediate machine feedback.
 5. Code simplicity.
-6. Number of chapters.
+6. Number of episodes.
 7. Visual polish.
 
 ## Ending and epilogue

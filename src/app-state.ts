@@ -57,17 +57,17 @@ export function missionComplete(state: AppState): boolean {
 
 export function parseRoute(hash: string): { route: Route; notice: string } {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
-  const rawChapter = params.get("chapter");
+  const rawChapter = params.get("episode") ?? params.get("chapter");
   const validChapter = rawChapter === null || ["0", "00", "1", "01"].includes(rawChapter);
   const chapterId = rawChapter === "1" || rawChapter === "01" ? 1 : 0;
   const rawView = params.get("view");
   const view = views.find((candidate) => candidate === rawView) ?? "workbench";
   return {
     route: { chapterId, view },
-    notice: validChapter ? "" : "That chapter is not available yet. You are back at Chapter 00.",
+    notice: validChapter ? "" : "That episode is not available yet. You are back at the Prologue.",
   };
 }
 
 export function routeHash(route: Route): string {
-  return `#chapter=${String(route.chapterId).padStart(2, "0")}&view=${route.view}`;
+  return `#episode=${String(route.chapterId).padStart(2, "0")}&view=${route.view}`;
 }

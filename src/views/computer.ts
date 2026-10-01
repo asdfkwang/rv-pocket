@@ -9,8 +9,8 @@ export function renderComputer(state: AppState): string {
       <span class="eyebrow">THE REPAIR STATION</span><div class="intro-prompt" aria-hidden="true">&gt;_</div>
       <h2>Machine and tools, side by side.</h2>
       <p>This is where you work on RV Pocket: inspect the device, connect the cable, run diagnostics, and read its responses. Each mission brings the tools it needs.</p>
-      <p>There is nothing to configure yet. Open the BOOK, then start your first repair when you are ready.</p>
-      <div class="button-row"><button id="computer-to-manual" class="button secondary" data-action="view" data-view="manual">Open BOOK</button></div>
+      <p>There is nothing to configure yet. Open the EBOOK, then start your first repair when you are ready.</p>
+      <div class="button-row"><button id="computer-to-manual" class="button secondary" data-action="view" data-view="manual">Open EBOOK</button></div>
     </section>`;
   }
   const machine = state.active.machine;
@@ -46,7 +46,7 @@ export function renderComputer(state: AppState): string {
       <select id="output-device"><option value="" ${state.ui.selectedDevice === "" ? "selected" : ""}>Choose a device…</option>${["cpu", "ram", "uart"].map((device) => `<option value="${device}" ${state.ui.selectedDevice === device ? "selected" : ""}>${device.toUpperCase()}</option>`).join("")}</select>
       <div class="value-field"><span class="field-label">Supplied value</span><code>65 <span>('A')</span></code><span class="muted">The value is provided. No code to write.</span></div>
       <button id="run-diagnostic" class="button primary full-width" data-action="run">Run diagnostic <span aria-hidden="true">→</span></button>
-      <p class="small muted">Need a clue? <button id="diagnostic-to-manual" class="text-button" data-action="view" data-view="manual">Look in the BOOK</button>.</p>
+      <p class="small muted">Need a clue? <button id="diagnostic-to-manual" class="text-button" data-action="view" data-view="manual">Look in the EBOOK</button>.</p>
     </section>` : ""}
   </div>`;
 }

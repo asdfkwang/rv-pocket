@@ -1,6 +1,6 @@
 # Development Plan
 
-Build the next playable mission before expanding the simulator. This document owns implementation order and exit criteria. The [roadmap](03_chapter_roadmap.md) owns mission content, the [schedule](07_schedule_and_milestones.md) owns tentative timing, and the [backlog](13_pm_backlog.md) tracks current tasks.
+Build the next playable episode before expanding the simulator. This document owns implementation order and exit criteria. The [roadmap](03_episode_roadmap.md) owns episode content, the [schedule](07_schedule_and_milestones.md) owns tentative timing, and the [backlog](13_pm_backlog.md) tracks current tasks.
 
 ## Phase 0 — Browser bootstrap and deployment
 
@@ -16,40 +16,44 @@ Remaining work:
 
 ## Phase 1 — Global UI shell
 
-Implement the chapter selector, Workbench / Computer / Manual views, and direct chapter navigation using [UI / UX](02_ui_ux.md). Keep navigation independent from transient mission state; expose only implemented chapters.
+Implement the episode selector, Workbench / Computer / Manual views, and direct episode navigation using [UI / UX](02_ui_ux.md). Keep navigation independent from transient episode state; expose only implemented episodes.
 
 **Exit:** Switching views preserves the current attempt; entering a different chapter or resetting it initializes the correct state. No simulator is needed yet.
 
-## Phase 2 — Chapter 00 onboarding
+## Phase 2 — Prologue onboarding
 
-Implement the story, navigation help, and Start Chapter 01 action. The Manual contains interface help, with no hardware lesson or quiz. Before Chapter 01 is available, its entry must be clearly unavailable rather than presented as a working repair.
+Implement the story, navigation help, and Start Episode 01 action. The Manual contains interface help, with no hardware lesson or quiz. Before Episode 01 is available, its entry must be clearly unavailable rather than presented as a working repair.
 
-**Exit:** A first-time player understands the three views and the premise. Once Phase 3 lands, Start enters the actual Chapter 01 mission.
+**Exit:** A first-time player understands the three views and the premise. Once Phase 3 lands, Start enters the actual Episode 01 repair.
 
-## Phase 3 — Chapter 01 UART vertical slice
+## Phase 3 — Episode 01 UART vertical slice
 
-Implement the [canonical Chapter contract](08_content_and_data_model.md#canonical-chapter-contract) and adapt Chapter 00 to it. Do not invent a second interface or general-purpose mission engine.
+Implement the [canonical Episode contract](08_content_and_data_model.md#canonical-episode-contract) and adapt the Prologue to it. Do not invent a second interface or general-purpose episode engine.
 
-Then implement the [Chapter 01 script](03_chapter_roadmap.md#chapter-01--is-anyone-there): cable interaction, terminal, short Manual page, three feedback questions, and a guided diagnostic that produces the first `A`. Use the [minimal UART state and completion predicate](08_content_and_data_model.md#chapter-01-state-and-completion).
+Then implement the [Episode 01 script](03_episode_roadmap.md#episode-01--output-in-the-wrong-place): cable interaction, terminal, short Manual page, three feedback questions, and a guided diagnostic that produces the first `A`. Use the [minimal UART state and completion predicate](08_content_and_data_model.md#episode-01-state-and-completion).
 
 **Exit:** A new player can complete the repair without developer help. Verify that:
 
 - the malfunction and objective appear before explanations;
-- a disconnected cable or wrong device choice cannot complete the mission;
+- a disconnected cable or wrong device choice cannot complete the repair;
 - a valid board transmit with the cable connected produces `A` and completion feedback;
 - Manual/quiz use is available without blocking an informed repair attempt;
 - view switches preserve state, while Reset restores the disconnected, silent machine;
-- a fresh direct entry into Chapter 01 works without completing Chapter 00.
+- a fresh direct entry into Episode 01 works without completing the Prologue.
 
 Playtest this loop before building more chapters. Rework unclear interactions before expanding scope.
 
 ## Later phases
 
-Implement these only after the first slice is validated. Chapter numbers and details remain in the [roadmap](03_chapter_roadmap.md).
+Implement these only after the first slice is validated. Episode numbers and details remain in the [roadmap](03_episode_roadmap.md).
 
-| Phase | Game chapters | Implementation focus | Exit criterion |
+> TODO: the phase grouping below still follows the old 33-episode outline. Replan the phases against the new Episodes 01–26 roadmap before committing to them.
+
+| Phase | Game episodes | Implementation focus | Exit criterion |
 | --- | --- | --- | --- |
-| 4 | 02–05 | RAM, timer, input, conceptual interrupt events | Multiple repairs reuse views and the Chapter contract with small simulation additions; no register/CSR prerequisites in Chapter 05 |
+| 4 | 02–05 | RAM, timer, input, conceptual interrupt events | Multiple repairs reuse views and the Episode contract with small simulation additions; no register/CSR prerequisites in Episode 05 |
+| --- | --- | --- | --- |
+| 4 | 02–05 | RAM, timer, input, conceptual interrupt events | Multiple repairs reuse views and the Episode contract with small simulation additions; no register/CSR prerequisites in Episode 05 |
 | 5 | 06–09 | Basic display, then register/PC tracing and guided instructions | A visible object can be repaired and moved using input |
 | 6 | 10–13 | DMA, cache maintenance, coherency, ordering | Each failure has a distinct observable cause and repair |
 | 7 | 14–17 | Calls/stack, traps, audio, integrated game | A functioning bare-metal game device |

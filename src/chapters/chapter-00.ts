@@ -17,9 +17,9 @@ export const chapter00: Chapter<OnboardingState> = {
     id: "using-the-bench",
     title: "A place to start",
     blocks: [
-      { kind: "text", body: "Two buttons. STATION is the workbench, BOOK is the manual." },
+      { kind: "text", body: "Two buttons. STATION is the workbench, EBOOK is the manual." },
       { kind: "text", body: "STATION is where you inspect the device, connect the cable, and run diagnostics. Each repair brings only the tools it needs." },
-      { kind: "text", body: "BOOK is your reference. When something does not make sense, look here for an explanation and a short check of your understanding." },
+      { kind: "text", body: "EBOOK is your reference. When something does not make sense, look here for an explanation and a short check of your understanding." },
       { kind: "text", body: "There is no saved progress. When you are ready, choose Start Chapter 01." },
     ],
   }],

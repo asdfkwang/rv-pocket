@@ -32,22 +32,22 @@ Add further modules only when an implemented chapter requires them.
 
 ## Content, state, and simulation boundaries
 
-The sole chapter schema is [`Chapter<State>` in the content model](08_content_and_data_model.md#canonical-chapter-contract). When implementation starts, place that contract in `src/chapters/types.ts`; keep this document as a reference, not another interface definition.
+The Episode schema is [`Episode<State>` in the content model](08_content_and_data_model.md#canonical-episode-contract). When implementation starts, place that contract in `src/chapters/types.ts`; keep this document as a reference, not another interface definition. (Runtime migration to `Episode` naming is still pending; see the TODO in the content model.)
 
-- Chapter definitions contain mission text, view configuration, Manual/quiz content, initial-state creation, and a success predicate.
+- Episode definitions contain problem/objective/result text, view configuration, Manual/quiz content, initial-state creation, and a success predicate.
 - Application navigation owns the selected chapter and view. Its behavior is specified in [UI / UX](02_ui_ux.md#state-and-navigation-behavior).
-- The active mission owns transient machine state. View changes must not recreate it.
+- The active episode owns transient machine state. View changes must not recreate it.
 - Views dispatch explicit actions to small simulation functions, then render the resulting state and completion result. They do not independently invent hardware behavior.
 
-For Chapter 01, a supplied diagnostic performs a UART transmit operation. A connected cable lets the host terminal receive `A`; without the cable it receives nothing. This models the observable repair without instruction execution, baud-rate configuration, an address map, or a parser.
+For Episode 01, a supplied diagnostic performs a UART transmit operation. A connected cable lets the host terminal receive `A`; without the cable it receives nothing. This models the observable repair without instruction execution, baud-rate configuration, an address map, or a parser.
 
 ## Simulation strategy
 
-Implement only behavior required by current chapters. Prefer conceptual correctness, deterministic execution, inspectable state, and simple code over cycle accuracy.
+Implement only behavior required by current episodes. Prefer conceptual correctness, deterministic execution, inspectable state, and simple code over cycle accuracy.
 
-RAM, timer, input, interrupt events, display, CPU tracing, DMA, and cache models are later additions driven by the [roadmap](03_chapter_roadmap.md). Early interrupt behavior is an event/handler/resume model; register and CSR internals are not hidden prerequisites.
+RAM, timer, input, interrupt events, display, CPU tracing, DMA, and cache models are later additions driven by the [roadmap](03_episode_roadmap.md). Early interrupt behavior is an event/handler/resume model; register and CSR internals are not hidden prerequisites.
 
-In later cache missions, distinguish ordinary RAM buffers from MMIO device registers. Cache maintenance and ordering are separate operations; one should not silently stand in for the other. Document deliberate simplifications in the relevant mission's Manual.
+In later cache episodes, distinguish ordinary RAM buffers from MMIO device registers. Cache maintenance and ordering are separate operations; one should not silently stand in for the other. Document deliberate simplifications in the relevant episode's Manual.
 
 ## Deferred runtime decisions
 

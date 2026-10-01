@@ -1,22 +1,28 @@
 # Learning Design
 
-## Manual inside the mission
+> Easy to read, hard to solve, always searchable.
 
-The [product vision](01_product_vision.md#mission-first-design) defines the mission-first loop. The Manual answers questions raised by the malfunction and remains available while the player experiments. It is not a mandatory lesson screen before tools become usable.
+## Manual inside the episode
 
-Use explanations, small diagrams, and examples relevant to the current mission and its prerequisites. Chapter 00 contains interface help only. Chapter 01's exact content and three-question quiz are specified in the [roadmap](03_chapter_roadmap.md#chapter-01--is-anyone-there).
+The [product vision](01_product_vision.md#problem-first-design) defines the problem-first loop. The Manual answers questions raised by the malfunction and remains available while the player experiments. It is not a mandatory lesson screen before tools become usable.
+
+Use explanations, small diagrams, and examples relevant to the current episode and its prerequisites. The Prologue contains interface help only. Episode 01's exact content and three-question quiz are specified in the [roadmap](03_episode_roadmap.md#episode-01--output-in-the-wrong-place).
 
 ## Quiz policy
 
-Quizzes live in the Manual and check reasoning rather than vocabulary recall. Show an explanation after each answer and allow retry. They do not unlock tools or determine mission completion; the machine's repaired behavior does.
+Quizzes live in the Manual and check reasoning rather than vocabulary recall. Show an explanation after each answer and allow retry. They do not unlock tools or determine repair completion; the machine's repaired behavior does.
 
-Chapter 01 has exactly three short questions. Later missions should use only the questions needed to reveal likely misconceptions, usually three to five, with no mandatory five-question template. Keep reading and quizzes short enough that the player can return to the repair quickly.
+Episode 01 has exactly three short questions. Later episodes should use only the questions needed to reveal likely misconceptions, usually three to five, with no mandatory five-question template. Keep reading and quizzes short enough that the player can return to the repair quickly.
 
 Useful question forms include state tracking, address routing, CPU/peripheral responsibility, operation ordering, and eventually register/PC tracing. Introduce each form only after its required concepts are available.
 
+## Open book, open web
+
+Quizzes and episodes are open-book/open-web by design. A player who cannot recall an answer is expected to search the Manual, follow related chapters, check the official specification, or search the internet. What matters is knowing what to look for and solving the problem, not memorization. A hard Check never has to be answerable from the Manual text alone.
+
 ## Prerequisite boundaries
 
-| Game chapter | What the player works with | What remains deferred |
+| Game episode | What the player works with | What remains deferred |
 | --- | --- | --- |
 | 01 | CPU/RAM/UART roles and one guided transmit request | SoC internals, address math, CPU instruction execution |
 | 02–04 | RAM addresses/data, a named timer control, input polling and basic MMIO | CPU registers, PC, assembly handlers |
@@ -24,15 +30,15 @@ Useful question forms include state tracking, address routing, CPU/peripheral re
 | 06 | Memory map and display control with a simple test pattern | Detailed pixel math |
 | 07–09 | CPU registers, PC, arithmetic, load/store, branches | Trap/CSR internals |
 | 14–15 | Calls/stack, followed by fault diagnosis, saved PC and trap CSR introduction | Full interrupt-controller configuration |
-| 19 | Interrupt internals and controller state using earlier CPU/trap knowledge | No new early-chapter prerequisite |
+| 19 | Interrupt internals and controller state using earlier CPU/trap knowledge | No new early-episode prerequisite |
 
-The [roadmap](03_chapter_roadmap.md) owns chapter numbers and mission details. Device registers in early MMIO missions are peripheral control/status locations; they are not the CPU register file taught in Chapter 07.
+The [roadmap](03_episode_roadmap.md) owns episode numbers and repair details. Device registers in early MMIO episodes are peripheral control/status locations; they are not the CPU register file taught in Episode 07.
 
-For Chapter 05, “save/return” means that interrupted work resumes correctly. Use a supplied event/handler/resume model. Do not require an assembly prologue, PC calculation, CSR manipulation, or trap-return instruction to complete that early repair.
+For Episode 05, “save/return” means that interrupted work resumes correctly. Use a supplied event/handler/resume model. Do not require an assembly prologue, PC calculation, CSR manipulation, or trap-return instruction to complete that early repair.
 
 ## Interaction progression
 
-- Early: named controls, guided choices, supplied values, and direct feedback; address entry begins when the mission teaches addresses.
+- Early: named controls, guided choices, supplied values, and direct feedback; address entry begins when the episode teaches addresses.
 - Middle: trace registers, reorder operations, inspect multiple hardware states, and edit bounded instruction sequences.
 - Late: diagnose boot logs, fill Device Tree fragments, repair constrained driver snippets, and write a short commit message.
 
