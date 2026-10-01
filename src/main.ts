@@ -1,7 +1,6 @@
 import { chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
-import { runDiagnostic, setUartConnection } from "./sim/uart";
-import { renderWorkbench } from "./views/workbench";
-import { renderComputer } from "./views/computer";
+import { renderStation } from "./views/station";
+import { renderTerminal } from "./views/terminal";
 import { getBookmarks, getCheckIndex, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck } from "./views/ebook";
 import { escapeHtml as e, viewLabels } from "./views/html";
 
@@ -9,8 +8,8 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
 const tourSteps = [
   { target: "chapter-select", title: "Episodes", body: "Switch episodes here. Each episode is one repair." },
-  { target: "open-station", title: "STATION", body: "Work on the machine here: inspect the device, connect the cable, run diagnostics." },
-  { target: "open-manual", title: "EBOOK", body: "The old manual. Check it whenever something is unclear." },
+  { target: "open-ebook", title: "EBOOK", body: "The old manual. Check it whenever something is unclear." },
+  { target: "open-terminal", title: "TERMINAL", body: "Talk to the machine here." },
   { target: "start-chapter", title: "Start Episode 01", body: "Ready? Begin the first repair." },
 ] as const;
 const initial = parseRoute(location.hash);
@@ -28,14 +27,14 @@ function render() {
   const complete = missionComplete(state);
   document.title = `${chapter.id === 0 ? "Prologue" : `Episode ${String(chapter.id).padStart(2, "0")}`} — ${chapter.title} | RV Pocket`;
   app.innerHTML = `<div class="app-shell">
-    ${state.view === "manual" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>`}
+    ${state.view === "ebook" || state.view === "terminal" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">EPISODE</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? "Prologue" : `Episode ${String(item.id).padStart(2, "0")}`} — ${e(item.title)}</option>`).join("")}</select></div><button id="reset-mission" class="reset-button" data-action="reset">Reset episode <span aria-hidden="true">↺</span></button></div>`}
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>First contact established. Next planned repair: Episode 02 — Bad Memory.</p></div></section>` : ""}
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">BENCH FEEDBACK</span><p>${e(state.ui.feedback)}</p></div>` : ""}
-      <div id="view-content">${state.view === "workbench" ? renderWorkbench(state) : state.view === "computer" ? renderComputer(state) : renderEbook(state)}</div>
+      <div id="view-content">${state.view === "station" ? renderStation() : state.view === "terminal" ? renderTerminal() : renderEbook(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed && state.view !== "manual" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed && state.view === "station" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">Start Episode 01 <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <span class="eyebrow">${chapter.id === 0 ? "PROLOGUE / THE OLD STUDIO" : "FIRST REPAIR / DIAGNOSTIC ACCESS"}</span>
       <h1 id="mission-title" tabindex="-1">${e(chapter.title)}</h1>
@@ -119,7 +118,7 @@ app.addEventListener("click", (event) => {
       if (state.active.id === 0) state.ui.tourStep = 0;
       render();
       document.getElementById("main-content")?.focus();
-      announce("Got it. Two buttons: Station, Ebook.");
+      announce("Got it. EBOOK and Terminal on the station.");
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;
@@ -165,25 +164,6 @@ app.addEventListener("click", (event) => {
       );
       return;
     }
-    case "inspect":
-      state.ui.inspected = true;
-      announce(state.active.id === 1 ? "Power is on. The screen is black. A connector on the edge is marked UART." : "A worn pocket computer from the old studio. Start the first repair when you are ready.");
-      render();
-      return;
-    case "cable":
-      if (state.active.id !== 1) return;
-      state.active.machine = setUartConnection(state.active.machine, !state.active.machine.uartConnected);
-      state.ui.feedback = state.active.machine.uartConnected
-        ? "UART cable connected. The computer is ready to receive. Connecting the cable alone does not send a character."
-        : "UART cable disconnected. Previously received characters remain in the terminal; no new data can arrive.";
-      break;
-    case "run": {
-      if (state.active.id !== 1) return;
-      const result = runDiagnostic(state.active.machine, state.ui.selectedDevice);
-      state.active.machine = result.state;
-      state.ui.feedback = result.feedback;
-      break;
-    }
     case "reset":
       state = resetMission(state);
       state.ui.feedback = "Episode reset. You are starting fresh in the same view.";
@@ -198,12 +178,6 @@ app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
     if (target.value === "0" || target.value === "1") goTo(Number(target.value) as ChapterId, state.view);
-  } else if (target instanceof HTMLSelectElement && target.id === "output-device") {
-    if (["", "cpu", "ram", "uart"].includes(target.value)) {
-      state.ui.selectedDevice = target.value as typeof state.ui.selectedDevice;
-      state.ui.feedback = "";
-      render();
-    }
   } else if (target instanceof HTMLInputElement && target.dataset.question) {
     const question = currentChapter(state).quiz.find((item) => item.id === target.dataset.question);
     if (!question || !question.choices.some((choice) => choice.id === target.value)) return;

@@ -109,16 +109,19 @@ body {
 }
 
 .back-row { margin-bottom: 12px; }
-.computer-grid > .back-row { grid-column: 1 / -1; }
 
-.hub {
-  display: grid;
-  gap: 12px;
+.station {
   max-width: 480px;
-  margin: 24px auto;
+  margin: 0 auto;
 }
 
-.hub-button {
+.station-buttons {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.station-button {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -129,11 +132,15 @@ body {
   font-size: 1.1rem;
   cursor: pointer;
   text-align: left;
+  width: 100%;
 }
 
-.hub-button strong { min-width: 72px; }
-.hub-button span:last-child { font-size: 0.85rem; color: var(--muted); }
-.hub-mark { font-weight: 700; }
+.station-mark { font-weight: 700; }
+
+.terminal-screen {
+  max-width: 480px;
+  margin: 0 auto;
+}
 
 .device-panel .device { margin: 12px 0 8px; }
 
@@ -267,11 +274,7 @@ body {
 }
 
 .panel,
-.device-panel,
-.terminal-panel,
-.diagnostic-panel,
-.manual-paper,
-.computer-intro {
+.device-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   padding: 16px;
@@ -306,16 +309,6 @@ body {
   margin-bottom: 16px;
   display: flex;
   gap: 12px;
-}
-
-.computer-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: 1fr;
-}
-
-@media (min-width: 760px) {
-  .computer-grid { grid-template-columns: 1.2fr 1fr; }
 }
 
 .device {
@@ -373,24 +366,6 @@ body {
 }
 
 .status-dot.connected { background: var(--accent); }
-
-.terminal-body pre,
-.manual-diagram {
-  background: #111;
-  color: #e8f5e9;
-  padding: 12px;
-  overflow-x: auto;
-}
-
-.manual-diagram { white-space: pre; }
-.manual-paper { max-width: 68ch; }
-.manual-header {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 2px solid var(--ink);
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-}
 
 .quiz-choice {
   display: block;

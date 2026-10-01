@@ -92,7 +92,7 @@ export function renderEbook(state: AppState): string {
   const bookmarks = getBookmarks(state.active.id);
   return `<div class="ebook">
     <aside class="ebook-side" aria-label="Book contents">
-      <button id="ebook-back" class="text-button" data-action="view" data-view="workbench">← Back</button>
+      <button id="ebook-back" class="text-button" data-action="view" data-view="station">← Back</button>
       ${bookmarkBox(state.active.id)}
       <label class="field-label" for="ebook-search">Search the book</label>
       <input id="ebook-search" type="search" value="${e(getEbookQuery())}" placeholder="Title, section, or word…" autocomplete="off">
