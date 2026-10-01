@@ -104,7 +104,10 @@ mat_cream = principled("Mat_Cream", base=(1.0, 0.95, 0.86, 1.0), rough=0.36,
                        clearcoat=0.35, subsurface=0.06, sub_color=(1.0, 0.90, 0.78, 1.0))
 mat_back_dark = principled("Mat_BackDark", base=(0.16, 0.11, 0.08, 1.0), rough=0.5)
 mat_back_warm = principled("Mat_BackWarm", base=(0.45, 0.33, 0.28, 1.0), rough=0.42, clearcoat=0.3)
-mat_screen = principled("Mat_Screen", base=(0.07, 0.08, 0.11, 1.0), rough=0.12, clearcoat=1.0)
+# Screen glass: dark, very smooth, with a strong clearcoat so the area lights
+# read as a reflection on the surface. That reflection is the "glare".
+mat_screen = principled("Mat_Screen", base=(0.045, 0.055, 0.075, 1.0), rough=0.05,
+                        clearcoat=1.0)
 mat_pixel = principled("Mat_Pixel", base=(0.0, 0.0, 0.0, 1.0), rough=0.5,
                        emission=(0.62, 1.0, 0.05), emission_strength=7.0)
 mat_dpad = principled("Mat_DPad", base=(0.12, 0.12, 0.14, 1.0), rough=0.35, clearcoat=0.6)
@@ -264,29 +267,10 @@ for p in glass.data.polygons:
 set_mat(glass, mat_screen)
 link(glass, col_scr)
 
-# screen glare: thin diagonal white plane, low alpha for that glossy logo streak
-bpy.ops.mesh.primitive_plane_add(
-    size=1, location=(SX + 0.5, GLASS_FRONT - GLASS_D / 2.0 - 0.004, SZ + 0.3))
-glare = bpy.context.active_object
-glare.name = "Screen_Glare"
-glare.scale = (0.22, 1.0, 0.7)
-glare.rotation_euler = (math.radians(90), 0, math.radians(28))
-mat_glare = bpy.data.materials.get("Mat_Glare")
-if mat_glare is None:
-    mat_glare = bpy.data.materials.new("Mat_Glare")
-    mat_glare.use_nodes = True
-    mat_glare.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
-    try:
-        mat_glare.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.05
-    except Exception:
-        pass
-    mat_glare.blend_method = "BLEND"
-mat_glare.blend_method = "BLEND"
-if glare.data.materials:
-    glare.data.materials[0] = mat_glare
-else:
-    glare.data.materials.append(mat_glare)
-link(glare, col_scr)
+# No fake glare plane. The streak on the screen comes from the glass material
+# itself: a glossy coat layer plus low roughness, so the area lights reflect in
+# it. Faking it with a translucent white plane produced a hard grey bar sitting
+# across the screen instead of a soft reflection.
 
 # ---- pixel smile (lime)
 # Each LED is its own cube placed on a PITCH grid, and is PITCH - GAP wide, so
@@ -430,7 +414,9 @@ for o in list(bpy.data.objects):
     if o.type == "LIGHT":
         bpy.data.objects.remove(o, do_unlink=True)
 
-area("Key_Front", (0.5, -5.0, 5.5), (1.0, 0.96, 0.9), 500, size=5.0)
+# Key light is a narrow-ish area so the screens catch a defined reflection
+# streak rather than an even wash.
+area("Key_Front", (0.5, -5.0, 5.5), (1.0, 0.96, 0.9), 500, size=3.0)
 area("Rim_Blue_L", (-5.5, -0.8, 1.2), (0.25, 0.45, 1.0), 1500, size=3.0)
 area("Rim_Orange_R", (5.5, -0.8, 2.0), (1.0, 0.5, 0.15), 1500, size=3.0)
 area("Top_Warm", (0.0, -0.5, 6.0), (1.0, 0.75, 0.45), 250, size=4.0)

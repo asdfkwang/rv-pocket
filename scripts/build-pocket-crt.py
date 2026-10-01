@@ -115,7 +115,7 @@ _set("Mat_Cream", (1.0, 0.95, 0.86, 1.0), 0.36, clearcoat=0.35,
      subsurface=0.06, sub_color=(1.0, 0.90, 0.78, 1.0))
 _set("Mat_BackDark", (0.16, 0.11, 0.08, 1.0), 0.5)
 _set("Mat_BackWarm", (0.45, 0.33, 0.28, 1.0), 0.42, clearcoat=0.3)
-_set("Mat_Screen", (0.07, 0.08, 0.11, 1.0), 0.12, clearcoat=1.0)
+_set("Mat_Screen", (0.045, 0.055, 0.075, 1.0), 0.05, clearcoat=1.0)
 _set("Mat_Pixel", (0.0, 0.0, 0.0, 1.0), 0.5,
      emission=(0.62, 1.0, 0.05), emission_strength=7.0)
 _set("Mat_DPad", (0.12, 0.12, 0.14, 1.0), 0.35, clearcoat=0.6)
@@ -208,18 +208,8 @@ def cblk(name, x, y, z, sx, sy, sz, mat, bevel, seg=4, sub=2):
 # surface wraps around its edge. No separate bezel frame.
 cblk("CRT_Glass", GX, CRT_GLASS_FRONT + 0.09, GZ, GW, 0.18, GH, mat_screen, 0.11)
 
-bpy.ops.mesh.primitive_plane_add(size=1, location=(GX + 0.45, CRT_GLASS_FRONT - 0.03, GZ + 0.3))
-shine = bpy.context.active_object
-shine.name = "CRT_Shine"
-shine.scale = (0.2, 0.6, 0.8)
-shine.rotation_euler = (math.radians(90), 0, math.radians(28))
-mat_shine = principled("Mat_Shine", base=(1, 1, 1, 1), rough=0.4)
-mat_shine.blend_method = "BLEND"
-try:
-    mat_shine.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.05
-except Exception:
-    pass
-set_mat(shine, mat_shine); link(shine, col_cdet)
+# No fake shine plane here either: the reflection comes from Mat_Screen's
+# low roughness and full clearcoat.
 
 # ---- chin strip + power button + red LED
 chin = rounded_box("CRT_Chin", (CX, FY + 0.02, -1.02), (3.0, 0.12, 0.3), bevel_w=0.05)
