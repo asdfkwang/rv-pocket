@@ -9,6 +9,7 @@ function book(): readonly EbookChapter[] {
   return getLang() === "ko" ? EBOOK_CHAPTERS_KO : EBOOK_CHAPTERS_EN;
 }
 import { EBOOK_BOOKMARKS } from "../ebook-bookmarks";
+import { UI, ui } from "../ui-locale";
 
 // BOOK reader state lives outside episode state on purpose:
 // the book is identical no matter which episode opens it.
@@ -131,7 +132,7 @@ export function renderBook(state: AppState): string {
   const next = book()[index + 1];
   return `<div class="ebook">
     <aside class="ebook-side" aria-label="Book contents">
-      <button id="ebook-back" class="text-button" data-action="view" data-view="${state.active.id !== 0 ? "pc" : "station"}">${state.active.id !== 0 ? "← BACK TO PC" : t("back")}</button>
+      <button id="ebook-back" class="text-button" data-action="view" data-view="${state.active.id !== 0 ? "pc" : "station"}">${state.active.id !== 0 ? ui(UI.bookBackPc) : t("back")}</button>
       <p><button class="text-button" data-action="view" data-view="datasheet">DATASHEET ↗</button></p>
       ${bookmarkBox(state.active.id)}
       <label class="field-label" for="ebook-search">${t("ebookSearchLabel")}</label>
@@ -139,7 +140,7 @@ export function renderBook(state: AppState): string {
       <nav aria-label="${t("ebookChaptersNav")}"><div id="ebook-toc">${tocList(slug, bookmarks)}</div></nav>
     </aside>
     <article class="ebook-page" aria-labelledby="ebook-title">
-      <span class="eyebrow">BOOK / COMPUTER SYSTEMS</span>
+      <span class="eyebrow">${e(ui(UI.bookWordmark))}</span>
       <h1 id="ebook-title" tabindex="-1">${e(ch.title)}</h1>
       <nav class="ebook-outline" aria-label="${e(ch.title)}"><ul>${ch.headings.filter((h) => h.depth === 2).map((h) => `<li><button class="text-button" data-action="ebook-section" data-heading="${e(h.id)}">${e(h.text)}</button></li>`).join("")}</ul></nav>
       <div class="ebook-body">${body}</div>

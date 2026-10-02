@@ -16,6 +16,9 @@ export const ko: Translations = {
   ebookView: "전자책",
 
   startEpisode01: "에피소드 01 시작",
+  startEpisodeNum: "에피소드 {n} 시작",
+  successNextLabel: "다음 수리:",
+  successRepairComplete: "수리 완료",
   gotIt: "알겠습니다",
   guideFmt: "안내 {i} / {n}",
   tourSkip: "건너뛰기",
@@ -26,7 +29,7 @@ export const ko: Translations = {
   episode01Eyebrow: "첫 수리 / 진단 접근",
   benchFeedback: "벤치 피드백",
 
-  successNextEpisode: "첫 통신 성공. 다음 예정 수리: 에피소드 02 — 나쁜 메모리.",
+  successNextEpisode: "다음: 포켓의 버튼 — 버튼에서 LED로.",
 
   routeNoticeUnavailable: "아직 준비되지 않은 에피소드입니다. 프롤로그로 돌아왔습니다.",
   resetFeedback: "에피소드를 초기화했습니다. 같은 화면에서 새로 시작합니다.",

@@ -14,6 +14,9 @@ export const en = {
   ebookView: "Ebook",
 
   startEpisode01: "Start Episode 01",
+  startEpisodeNum: "Start Episode {n}",
+  successNextLabel: "Next repair:",
+  successRepairComplete: "Repair complete",
   gotIt: "Got it",
   guideFmt: "GUIDE {i} / {n}",
   tourSkip: "Skip",
@@ -24,7 +27,7 @@ export const en = {
   episode01Eyebrow: "FIRST REPAIR / DIAGNOSTIC ACCESS",
   benchFeedback: "BENCH FEEDBACK",
 
-  successNextEpisode: "First contact established. Next planned repair: Episode 02 — Bad Memory.",
+  successNextEpisode: "Next: the Pocket's buttons — Button to LED.",
 
   routeNoticeUnavailable: "That episode is not available yet. You are back at the Prologue.",
   resetFeedback: "Episode reset. You are starting fresh in the same view.",

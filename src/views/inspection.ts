@@ -6,6 +6,7 @@ import { escapeHtml as e } from "./html";
 import type { InterruptMissionState } from "../sim/interrupt";
 import { FB_BASE, DISPLAY_WIDTH, DISPLAY_HEIGHT } from "../sim/framebuffer";
 import { renderDisplayReadout, renderMovingReadout } from "./display";
+import { UI, ui, fill } from "../ui-locale";
 
 // A row is one 32-bit word. Addresses step by four because the store is a word store,
 // and a word in memory holds its lowest byte at the lowest address (little-endian).
@@ -64,14 +65,14 @@ function renderTimerCpu(state: AppState): string {
   ];
   return `<dl class="register-table">${rows.map(([name, value, note]) =>
     `<div class="register-row"><dt>${e(name)}</dt><dd>${e(formatAddress(value))}</dd>${note ? `<span class="register-note">${e(note)}</span>` : ""}</div>`,
-  ).join("")}</dl><p class="inspection-note">The program is still inside its wait loop, comparing MTIME against x6. x6 is the tick count the program asked for; MTIME is the count the hardware has actually produced.</p>`;
+  ).join("")}</dl><p class="inspection-note">${e(ui(UI.coverTimerNote))}</p>`;
 }
 
 export function interruptCpuNote(machine: InterruptMissionState): string {
-  if (machine.installedProgram.kind === "polling") return "The CPU keeps reading BUTTON_REG even when nothing happens. Let the button request service instead.";
-  if (machine.pendingIrq) return "IRQ is still pending. Without ACK, the request calls the handler again and the CPU keeps running.";
-  if (machine.cpuState === "RUNNING") return "The handler returned, but main never waits. The CPU keeps running between button events.";
-  return "The CPU waits without reading the button. A press or release requests service; the handler reads, updates the LED, and acknowledges the IRQ.";
+  if (machine.installedProgram.kind === "polling") return ui(UI.cpuNotePolling);
+  if (machine.pendingIrq) return ui(UI.cpuNotePending);
+  if (machine.cpuState === "RUNNING") return ui(UI.cpuNoWait);
+  return ui(UI.cpuNoteGood);
 }
 
 export function irqReplayStep(state: AppState): number {
@@ -83,21 +84,26 @@ export function irqReplayStep(state: AppState): number {
 export function renderIrqReplay(state: AppState): string {
   if (state.active.id !== 5) return "";
   const event = state.active.machine.lastEvent;
-  if (!event) return `<p class="inspection-note">No button event yet.</p>`;
+  if (!event) return `<p class="inspection-note">${e(ui(UI.coverNoEvent))}</p>`;
   const current = irqReplayStep(state);
-  return `<p class="inspection-note">Recorded event: ${event.buttonValue ? "press" : "release"} · ${event.buttonReads.toLocaleString("en-US")} reads / ${event.irqCount.toLocaleString("en-US")} IRQs</p><ol class="irq-trace">${event.steps.map((step, index) => `<li class="irq-trace-step${index === current ? " active" : ""}${index <= current ? " reached" : ""}" data-step="${index}"${index === current ? ' aria-current="step"' : ""}>${e(step)}</li>`).join("")}</ol>`;
+  const headline = fill(UI.coverReplayFmt, {
+    what: ui(event.buttonValue ? UI.coverPress : UI.coverRelease),
+    reads: event.buttonReads.toLocaleString("en-US"),
+    irqs: event.irqCount.toLocaleString("en-US"),
+  });
+  return `<p class="inspection-note">${e(headline)}</p><ol class="irq-trace">${event.steps.map((step, index) => `<li class="irq-trace-step${index === current ? " active" : ""}${index <= current ? " reached" : ""}" data-step="${index}"${index === current ? ' aria-current="step"' : ""}>${e(step)}</li>`).join("")}</ol>`;
 }
 
 function renderInterruptCpu(state: AppState): string {
   if (state.active.id !== 5) return "";
   const machine = state.active.machine;
-  return `<span class="eyebrow">CURRENT STATE / LIVE</span><dl class="register-table">
-    <div class="register-row"><dt>BUTTON READS</dt><dd id="button-reads">${machine.buttonReads.toLocaleString("en-US")}</dd></div>
-    <div class="register-row"><dt>IRQ COUNT</dt><dd id="irq-count">${machine.irqCount.toLocaleString("en-US")}</dd></div>
-    <div class="register-row"><dt>CPU STATE</dt><dd id="cpu-state">${machine.cpuState}</dd></div>
-    <div class="register-row"><dt>LED</dt><dd id="cpu-led">${machine.ledValue ? "ON" : "OFF"}</dd></div>
+  return `<span class="eyebrow">${e(ui(UI.coverCurrentState))}</span><dl class="register-table">
+    <div class="register-row"><dt>${e(ui(UI.coverButtonReads))}</dt><dd id="button-reads">${machine.buttonReads.toLocaleString("en-US")}</dd></div>
+    <div class="register-row"><dt>${e(ui(UI.coverIrqCount))}</dt><dd id="irq-count">${machine.irqCount.toLocaleString("en-US")}</dd></div>
+    <div class="register-row"><dt>${e(ui(UI.coverCpuState))}</dt><dd id="cpu-state">${machine.cpuState}</dd></div>
+    <div class="register-row"><dt>LED</dt><dd id="cpu-led">${machine.ledValue ? ui(UI.on) : ui(UI.off)}</dd></div>
   </dl><p id="interrupt-cpu-note" class="inspection-note">${e(interruptCpuNote(machine))}</p>
-  <section class="irq-replay-panel" aria-labelledby="irq-replay-heading"><h4 id="irq-replay-heading" class="eyebrow">LAST BUTTON EVENT / REPLAY</h4><p class="inspection-note">Input and LED respond immediately. This replay shows the completed handling flow; the live state is above.</p><div id="irq-replay">${renderIrqReplay(state)}</div></section>`;
+  <section class="irq-replay-panel" aria-labelledby="irq-replay-heading"><h4 id="irq-replay-heading" class="eyebrow">${e(ui(UI.coverLastEvent))}</h4><p class="inspection-note">${e(ui(UI.coverReplayNote))}</p><div id="irq-replay">${renderIrqReplay(state)}</div></section>`;
 }
 
 function renderCpuModule(state: AppState): string {
@@ -109,7 +115,7 @@ function renderCpuModule(state: AppState): string {
 export function renderCoverToggle(state: AppState): string {
   if (!currentChapter(state).cover) return "";
   const open = state.ui.coverOpen;
-  return `<button id="toggle-cover" class="cover-toggle${open ? " open" : ""}" data-action="toggle-cover" aria-expanded="${open}" aria-controls="inspection-panel">${open ? "CLOSE COVER" : "OPEN COVER"} <span aria-hidden="true">${open ? "▼" : "▲"}</span></button>`;
+  return `<button id="toggle-cover" class="cover-toggle${open ? " open" : ""}" data-action="toggle-cover" aria-expanded="${open}" aria-controls="inspection-panel">${e(ui(open ? UI.coverCloseLabel : UI.coverOpenLabel))} <span aria-hidden="true">${open ? "▼" : "▲"}</span></button>`;
 }
 
 export function renderInspectionPanel(state: AppState): string {
@@ -117,7 +123,7 @@ export function renderInspectionPanel(state: AppState): string {
   if (!cover || !state.ui.coverOpen) return "";
   const selected = cover.modules.includes(state.ui.coverModule) ? state.ui.coverModule : cover.selected;
   return `<section class="inspection-panel" id="inspection-panel" aria-labelledby="inspection-heading" tabindex="-1">
-    <header class="inspection-header"><h3 id="inspection-heading" class="eyebrow">RV POCKET / OPEN COVER</h3><nav class="module-tabs" aria-label="Hardware modules">${cover.modules.map((module) => `<button class="module-tab${module === selected ? " active" : ""}" data-action="cover-module" data-module="${module}" aria-pressed="${module === selected}">${module.toUpperCase()}</button>`).join("")}</nav></header>
+    <header class="inspection-header"><h3 id="inspection-heading" class="eyebrow">${e(ui(UI.coverHeading))}</h3><nav class="module-tabs" aria-label="${e(ui(UI.coverModulesAria))}">${cover.modules.map((module) => `<button class="module-tab${module === selected ? " active" : ""}" data-action="cover-module" data-module="${module}" aria-pressed="${module === selected}">${module.toUpperCase()}</button>`).join("")}</nav></header>
     ${selected === "display" ? `<div id="display-live" data-readout="hardware">${renderDisplayReadout(state, true)}</div>` : selected === "cpu" ? renderCpuModule(state) : renderRamModule(state)}
   </section>`;
 }
@@ -127,7 +133,8 @@ export function renderFramebufferRam(state: AppState): string {
   const m = state.active.machine;
   const lastAddress = state.active.id === 7 ? state.active.machine.lastWrite.address : null;
   const outside = Object.entries(m.cells).filter(([address, value]) => Number(address) >= FB_BASE + 128 && value !== 0);
-  return `<p class="inspection-note">FRAMEBUFFER / 8 rows × 16 bytes. ${state.active.id === 7 ? "Outline = last write." : "Lit bytes hold the marker and automatic dot."} The display scans only this window.</p><div class="framebuffer-rows">${Array.from({ length: DISPLAY_HEIGHT }, (_, y) => `<div class="framebuffer-row">${formatAddress(FB_BASE + y * DISPLAY_WIDTH)} ${Array.from({ length: DISPLAY_WIDTH }, (_, x) => {
+  const note = fill(UI.framebufferNote, { what: ui(state.active.id === 7 ? UI.framebufferOutline : UI.framebufferLit) });
+  return `<p class="inspection-note">${e(note)}</p><div class="framebuffer-rows">${Array.from({ length: DISPLAY_HEIGHT }, (_, y) => `<div class="framebuffer-row">${formatAddress(FB_BASE + y * DISPLAY_WIDTH)} ${Array.from({ length: DISPLAY_WIDTH }, (_, x) => {
     const address = FB_BASE + y * DISPLAY_WIDTH + x;
     return `<span class="framebuffer-byte${m.cells[address] ? " on" : ""}${address === lastAddress ? " last" : ""}"${address === lastAddress ? ' title="Last write"' : ""}>${(m.cells[address] ?? 0).toString(16).padStart(2, "0")}</span>`;
   }).join("")}</div>`).join("")}</div>${outside.length ? `<h4 class="eyebrow">WRITES OUTSIDE DISPLAY</h4><pre class="display-log">${outside.map(([address, value]) => `${formatAddress(Number(address))}  ${value.toString(16).padStart(2, "0")}${Number(address) === lastAddress ? " ← LAST WRITE" : ""}`).join("\n")}</pre>` : ""}`;

@@ -15,6 +15,7 @@ import { renderDatasheet } from "./views/datasheet";
 import { DATASHEET_SECTIONS } from "./datasheet-content";
 import { confirmCheck, getBookmarks, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderBook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/book";
 import { escapeHtml as e } from "./views/html";
+import { UI, ui, fill } from "./ui-locale";
 
 import { flashMovingProgram, movingProgramFromDraft, moveMovingMarker, rebootMovingTarget, setMovingButton, tickMoving } from "./sim/moving";
 import { editProgramBlock } from "./chapters/types";
@@ -67,7 +68,7 @@ function render() {
   });
   app.innerHTML = `<div class="app-shell">
     <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">${e(t("episodeLabel"))}</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? t("prologue") : t("episodeFmt", { n: String(item.id).padStart(2, "0") })} — ${e(chapterTitle(item))}</option>`).join("")}</select></div><div class="top-bar-actions"><button id="reset-mission" class="reset-button" data-action="reset">${e(t("resetEpisode"))} <span aria-hidden="true">↺</span></button><button id="lang-toggle" class="reset-button" data-action="lang">${e(t("langToggleLabel"))}</button></div></div>
-    <nav class="view-nav" aria-label="Views"${state.ui.introDismissed ? "" : " inert"}>${(["station", "pc", "datasheet", "book"] as const).map((view) => `<button class="view-tab${state.view === view ? " active" : ""}" data-action="view" data-view="${view}"${state.view === view ? ' aria-current="page"' : ""}>${viewLabel(view)}</button>`).join("")}</nav>
+    <nav class="view-nav" aria-label="${e(ui(UI.ariaViews))}"${state.ui.introDismissed ? "" : " inert"}>${(["station", "pc", "datasheet", "book"] as const).map((view) => `<button class="view-tab${state.view === view ? " active" : ""}" data-action="view" data-view="${view}"${state.view === view ? ' aria-current="page"' : ""}>${viewLabel(view)}</button>`).join("")}</nav>
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
       <div id="mission-status">${renderMissionStatus(state)}</div>
@@ -268,9 +269,9 @@ function setButton(held: boolean) {
   }
   const complete = missionComplete(state);
   if (complete && !wasComplete) announce(currentChapter(state).mission.successMessage);
-  else announce(held
-    ? state.active.machine.ledValue ? "Button pressed. The LED is on." : "Button pressed. The LED did not change."
-    : `Button released. The LED is ${state.active.machine.ledValue ? "still on" : "off"}.`);
+  else announce(ui(held
+    ? state.active.machine.ledValue ? UI.pressLedOn : UI.pressNoChange
+    : state.active.machine.ledValue ? UI.releaseLedOn : UI.releaseLedOff));
 }
 
 function refreshInputObservation() {
@@ -383,13 +384,13 @@ async function buildAndFlash() {
   const store = readStoreAddress(state.ui.draftStoreAddress);
   const timebase = parseTimebase(state.ui.draftTimebase);
   const program = currentChapter(state).computer.program;
-  const error = chapterId === 1 && byte === null ? "Enter one hex byte from 0x00 to 0xFF."
+  const error = chapterId === 1 && byte === null ? ui(UI.buildByteError)
     : chapterId === 2 ? store.error
-    : chapterId === 3 && timebase === null ? "Choose a supported program timebase."
+    : chapterId === 3 && timebase === null ? ui(UI.buildTimebaseError)
     : chapterId === 4 && program!.blocks.some((block) => !(state.ui.draftBlocks.body ?? []).includes(block.id))
-      ? "Place every block before building." : "";
+      ? ui(UI.buildMissingBlocks) : "";
   if (error) {
-    state.ui.feedback = `Build stopped. ${error} The running firmware is unchanged.`;
+    state.ui.feedback = fill(UI.buildStopped, { error });
     render();
     document.getElementById(chapterId === 1 ? "byte-value" : chapterId === 2 ? "store-address" : "timebase-frequency")?.focus();
     announce(state.ui.feedback);
@@ -406,7 +407,7 @@ async function buildAndFlash() {
   state.ui.buildPhase = "building";
   state.ui.buildLog = ["BUILD..."];
   render();
-  announce(`Building ${fileName}.`);
+  announce(fill(UI.buildAnnounce, { file: fileName }));
   await wait(400);
   if (attempt !== buildAttempt || state.active.id !== chapterId) return;
   state.ui.buildPhase = "flashing";
@@ -425,36 +426,33 @@ async function buildAndFlash() {
     state.active.machine = rebootTarget(flashFirmware(state.active.machine, byte!));
     state.ui.draftByte = formatByte(byte!);
     const received = serialDisplay(state.active.machine.terminalOutput);
-    state.ui.feedback = missionComplete(state) ? "The Pocket sent A. UART PASS. The display can wait for its own repair."
-      : `The Pocket sent ${received}. Expected A. Check the byte in boot.S and the ASCII table in DATASHEET.`;
+    state.ui.feedback = missionComplete(state) ? ui(UI.passUart) : fill(UI.missUart, { got: received });
   } else if (state.active.id === 2) {
     state.active.machine = rebootMemoryTarget(flashMemoryFirmware(state.active.machine, store.address!));
     state.ui.draftStoreAddress = formatAddress(store.address!);
     state.ui.feedback = missionComplete(state)
-      ? `RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} and nothing was transmitted. Watch the value under OPEN COVER.`
-      : `The store went to ${formatAddress(store.address!)}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is still empty. Compare the destination with the Memory Map in DATASHEET.`;
+      ? fill(UI.passRam, { addr: formatAddress(WATCHED_RAM_ADDRESS) })
+      : fill(UI.missRam, { addr: formatAddress(store.address!), target: formatAddress(WATCHED_RAM_ADDRESS) });
   } else if (state.active.id === 3) {
     state.active.machine = rebootTimerTarget(flashTimerFirmware(state.active.machine, timebase!));
-    state.ui.feedback = `Program timebase installed: ${formatFrequency(timebase!)}. The program now waits ${timerTargetTicks(timebase!).toLocaleString("en-US")} ticks. Observe two ticks; the hardware timer stays at 1 GHz.`;
+    state.ui.feedback = fill(UI.passTimebase, { hz: formatFrequency(timebase!), ticks: timerTargetTicks(timebase!).toLocaleString("en-US") });
   } else if (state.active.id === 5) {
     state.active.machine = flashInterruptProgram(state.active.machine, state.ui.draftInterrupts
       ? interruptProgramFromDraft(state.ui.draftBlocks) : { kind: "polling" });
     state.ui.irqReplayElapsedMs = 0;
-    state.ui.feedback = state.ui.draftInterrupts
-      ? "button.c installed. Watch the live CPU state, then press and release A. No ACK means the IRQ stays pending."
-      : "Polling installed again. BUTTON READS keeps increasing while the button is untouched. Switch to interrupts to repair it.";
+    state.ui.feedback = ui(state.ui.draftInterrupts ? UI.passIrq : UI.missIrq);
   } else if (state.active.id === 8) {
     state.active.machine = flashMovingProgram(state.active.machine, movingProgramFromDraft(state.ui.draftBlocks));
-    state.ui.feedback = "events.c installed. Hold A for one second and use the D-pad. The handler must return so main can process frames.";
+    state.ui.feedback = ui(UI.passEvents);
   } else if (state.active.id === 7) {
     state.active.machine = flashFramebufferProgram(state.active.machine, state.ui.draftRowBytes);
-    state.ui.feedback = "pixel.c installed. Test the center and all four corners; follow the actual write address.";
+    state.ui.feedback = ui(UI.passFramebuffer);
   } else if (state.active.id === 6) {
     state.active.machine = flashDisplayProgram(state.active.machine, state.ui.draftBlocks.setup ?? []);
-    state.ui.feedback = "display.c installed. Observe the screen and the actual startup log. Device readiness takes 500 ms.";
+    state.ui.feedback = ui(UI.passDisplay);
   } else {
     state.active.machine = flashInputProgram(state.active.machine, state.ui.draftBlocks.body ?? []);
-    state.ui.feedback = `button.c installed with ${(state.ui.draftBlocks.body ?? []).length} blocks. Hold the A button on the station and watch the LED.`;
+    state.ui.feedback = fill(UI.passButton, { n: String((state.ui.draftBlocks.body ?? []).length) });
   }
   state.ui.buildPhase = "idle";
   state.ui.buildLog.push("✓ Pocket booted");
@@ -478,36 +476,36 @@ function resetTarget() {
   if (state.active.id === 6 || state.active.id === 8) stopDisplayTicker();
   if (state.active.id === 1) {
     state.active.machine = rebootTarget(state.active.machine);
-    state.ui.feedback = `Pocket reset. Received ${serialDisplay(state.active.machine.terminalOutput)} from the installed firmware.`;
+    state.ui.feedback = fill(UI.resetUart, { got: serialDisplay(state.active.machine.terminalOutput) });
   } else if (state.active.id === 2) {
     state.active.machine = rebootMemoryTarget(state.active.machine);
     const store = state.active.machine.lastStore;
     state.ui.feedback = missionComplete(state)
-      ? `Pocket reset. RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} again, and nothing was transmitted.`
-      : `Pocket reset. The installed program stored to ${store ? formatAddress(store.address) : "an unknown address"}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is unchanged.`;
+      ? fill(UI.resetRamPass, { addr: formatAddress(WATCHED_RAM_ADDRESS) })
+      : fill(UI.resetRamMiss, { addr: store ? formatAddress(store.address) : ui(UI.resetUnknownAddress), target: formatAddress(WATCHED_RAM_ADDRESS) });
   } else if (state.active.id === 3) {
     stopTimer();
     state.active.machine = rebootTimerTarget(state.active.machine);
-    state.ui.feedback = `Pocket reset. The diagnostic uses the installed ${formatFrequency(state.active.machine.timebaseHz)} program timebase; the hardware timer runs at 1 GHz.`;
+    state.ui.feedback = fill(UI.resetTimebase, { hz: formatFrequency(state.active.machine.timebaseHz) });
   } else if (state.active.id === 5) {
     state.ui.buttonHeld = false;
     state.active.machine = rebootInterruptTarget(state.active.machine);
     state.ui.irqReplayElapsedMs = 0;
-    state.ui.feedback = "Pocket reset. Counters and observations cleared; the installed program restarted. The editor draft is preserved.";
+    state.ui.feedback = ui(UI.resetIrq);
   } else if (state.active.id === 8) {
     state.active.machine = rebootMovingTarget(state.active.machine);
-    state.ui.feedback = "Pocket reset. Installed event flow restarted; frames, pending work, and observations cleared. The editor draft is preserved.";
+    state.ui.feedback = ui(UI.resetEvents);
   } else if (state.active.id === 7) {
     state.active.machine = rebootFramebufferTarget(state.active.machine);
-    state.ui.feedback = "Pocket reset. The installed ROW_BYTES is preserved; position and observations restarted. The draft is unchanged.";
+    state.ui.feedback = ui(UI.resetFramebuffer);
   } else if (state.active.id === 6) {
     state.ui.buttonHeld = false;
     state.active.machine = rebootDisplayTarget(state.active.machine);
-    state.ui.feedback = "Pocket reset. The installed startup sequence restarted; the editor draft is preserved.";
+    state.ui.feedback = ui(UI.resetDisplay);
   } else {
     state.ui.buttonHeld = false;
     state.active.machine = pollInput(state.active.machine, 0);
-    state.ui.feedback = "Pocket reset. The installed program ran again. Hold the A button and watch the LED.";
+    state.ui.feedback = ui(UI.resetButton);
   }
   if (state.active.id === 3) { render(); startTimer(); }
   else if (state.active.id >= 4) render();
@@ -592,7 +590,7 @@ app.addEventListener("click", (event) => {
       // Opening or closing the cover must not interrupt a running diagnostic.
       state.ui.coverOpen = !state.ui.coverOpen;
       render();
-      announce(state.ui.coverOpen ? "Cover open. The hardware modules are on the station." : "Cover closed.");
+      announce(state.ui.coverOpen ? ui(UI.coverOpen) : ui(UI.coverClosed));
       return;
     }
     case "cover-module": {
@@ -600,14 +598,14 @@ app.addEventListener("click", (event) => {
       if (module !== "cpu" && module !== "ram" && module !== "display") return;
       state.ui.coverModule = module;
       render();
-      announce(`${module.toUpperCase()} module.`);
+      announce(fill(UI.moduleFmt, { module: module.toUpperCase() }));
       return;
     }
     case "switch-interrupts":
       if (state.ui.buildPhase !== "idle") return;
       state = switchToInterruptDraft(state);
       render();
-      announce("Interrupt draft opened. The installed polling program is still running.");
+      announce(ui(UI.interruptDraftOpen));
       return;
     case "block-add":
     case "block-remove": {
@@ -633,7 +631,7 @@ app.addEventListener("click", (event) => {
       state.ui.datasheetSection = section.id;
       render();
       document.getElementById("datasheet-title")?.focus({ preventScroll: true });
-      announce(section.title);
+      announce(ui(section.title));
       return;
     }
     case "lang":
@@ -652,7 +650,7 @@ app.addEventListener("click", (event) => {
       document.getElementById("main-content")?.focus({ preventScroll: true });
       if (state.active.id === 1 || state.active.id === 2) pulseTx();
       if (state.active.id === 3) startTimer();
-      announce(state.active.id === 0 ? "The PC, Pocket, DATASHEET and BOOK are on the station." : chapterMission(currentChapter(state)).summary);
+      announce(state.active.id === 0 ? ui(UI.dismissIntro) : chapterMission(currentChapter(state)).summary);
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;
@@ -755,7 +753,10 @@ app.addEventListener("change", (event) => {
     if (!question || !question.choices.some((choice) => choice.id === target.value)) return;
     state.ui.quizAnswers[question.id] = target.value;
     render();
-    announce(`${target.value === question.answerId ? "That's right." : "Not quite. Try again."} ${question.explanation}`);
+    announce(fill({ en: "{verdict} {why}", ko: "{verdict} {why}" }, {
+      verdict: ui(target.value === question.answerId ? UI.quizRight : UI.quizWrong),
+      why: question.explanation,
+    }));
   }
 });
 

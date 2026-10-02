@@ -1,4 +1,5 @@
 import { BOOTROM_BASE, BOOTROM_SIZE, RAM_BASE, RAM_SIZE, UART1_BASE, formatAddress } from "../platform";
+import { ui } from "../ui-locale";
 export { formatAddress } from "../platform";
 
 export const WATCHED_RAM_ADDRESS = 0x00002000;
@@ -24,14 +25,23 @@ export function parseAddress(input: string): number | null {
 
 export function readStoreAddress(input: string): { address: number | null; error: string } {
   const address = parseAddress(input);
-  if (address === null) return { address: null, error: "Enter a 32-bit hex address, for example 0x00002000." };
-  if (address % 4 !== 0) return { address: null, error: "A 32-bit store needs a four-byte-aligned address." };
+  if (address === null) return { address: null, error: storeError("format") };
+  if (address % 4 !== 0) return { address: null, error: storeError("align") };
   if ((address >= RAM_BASE && address <= RAM_BASE + RAM_SIZE - 4) || address === UART1_BASE) {
     return { address, error: "" };
   }
-  return { address: null, error: address >= BOOTROM_BASE && address < BOOTROM_BASE + BOOTROM_SIZE
-    ? "Boot ROM is read-only. Store the value in RAM."
-    : "This supplied program supports RAM and UART1 DATA writes. Other device writes are outside this repair." };
+  return { address: null, error: storeError(address >= BOOTROM_BASE && address < BOOTROM_BASE + BOOTROM_SIZE ? "bootrom" : "device") };
+}
+
+type StoreErrorKind = "format" | "align" | "bootrom" | "device";
+
+function storeError(kind: StoreErrorKind): string {
+  return ui({
+    format: { en: "Enter a 32-bit hex address, for example 0x00002000.", ko: "32비트 16진수 주소를 입력하세요. 예: 0x00002000" },
+    align: { en: "A 32-bit store needs a four-byte-aligned address.", ko: "32비트 저장은 4바이트 경계에 맞춘 주소가 필요합니다." },
+    bootrom: { en: "Boot ROM is read-only. Store the value in RAM.", ko: "부트 ROM은 읽기 전용입니다. 값을 RAM에 저장하세요." },
+    device: { en: "This supplied program supports RAM and UART1 DATA writes. Other device writes are outside this repair.", ko: "제공된 프로그램은 RAM과 UART1 DATA 쓰기를 지원합니다. 다른 장치 쓰기는 이번 수리 범위 밖입니다." },
+  }[kind]);
 }
 
 export function formatWord(value: number): string {
