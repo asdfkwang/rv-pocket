@@ -11,7 +11,7 @@ export const chapter00: Chapter<OnboardingState> = {
     initialObservation: "Your parents' game studio has closed. On the old development desk: a broken pocket computer, its technical manual, and one unfinished story.",
     successMessage: "The bench is yours. Time for the first repair.",
   },
-  workbench: { objects: ["pocket", "computer", "manual"] },
+  workbench: { objects: ["pocket", "computer", "datasheet", "book"] },
   computer: { panels: [] },
   manual: [{
     id: "using-the-bench",

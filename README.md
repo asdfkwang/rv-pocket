@@ -8,9 +8,13 @@ You inherit a broken pocket computer and an old hardware manual from your parent
 
 ## Current status
 
-The local workspace has a blank Bun project and design documentation. GitHub Pages is already configured to use GitHub Actions. The browser UI, playable chapters, and local build/deployment workflow still need implementation and verification.
+The browser prototype has Prologue onboarding and playable Episodes 01–03. STATION shows the development PC, RV Pocket, connected UART cable, and two separate references. PC opens a fixed editor, serial terminal, target status, and Build & Flash controls, with a memory map or timer inspector when the episode needs it. DATASHEET contains the fictional hardware memory map, UART register contract, ASCII values, and timer clock reference. BOOK contains the existing study chapters, search, and checks. The Pocket can be inspected from the station.
 
-The first playable target is Prologue onboarding followed by Episode 01: connect UART and receive the machine's first `A`. The longer roadmap describes planned work, including a future Linux boot milestone.
+Episode 01 starts with inherited firmware sending `B`. Change the single editable byte in `boot.S` from `0x42` to `0x41`, then Build & Flash to reboot and receive `A`. Episode 02 reports shifting RAM errors inside the diagnostic's reserved workspace; edit the START/END range and RUN a test outside that workspace. Build & Flash installs the range for RESET. Episode 03 sends timer ticks every two seconds with a 5 MHz source; install 10 MHz to observe one-second ticks and a matching LED pulse.
+
+These are constrained local simulations, with no assembler or full emulator. Episode 03 measures elapsed browser time between live ticks. Later episodes, including Linux boot, remain planned work. Each episode starts with its prerequisite repairs already represented. Reload or Reset episode starts a fresh attempt; changing views preserves it.
+
+Run `bun run dev`, `bun run typecheck`, `bun run build`, and `bun test`. Direct episode routes: `#episode=01&view=station`, `#episode=02&view=station`, and `#episode=03&view=station`.
 
 ## Prototype
 

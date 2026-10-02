@@ -1,22 +1,37 @@
 import { viewLabel, chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
-import { getLang, setLang, t, toggleLang } from "./i18n";
+import { getLang, t, toggleLang } from "./i18n";
 import { chapterMission, chapterTitle } from "./chapters/locale";
 import { renderStation } from "./views/station";
-import { renderTerminal } from "./views/terminal";
-import { confirmCheck, getBookmarks, getCheckIndex, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderEbook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/ebook";
+import { renderPc, renderInspector, sourceStatus, stationSerialSummary } from "./views/pc";
+import { renderPocket } from "./views/pocket";
+import { flashFirmware, formatByte, parseByte, rebootTarget, serialDisplay } from "./sim/uart";
+import { flashMemoryFirmware, formatAddress, readMemoryRange, rebootMemoryTarget, runMemoryTest } from "./sim/memory";
+import { flashTimerFirmware, formatInterval, parseClock, rebootTimerTarget, recordTimerTick, timerIntervalMs } from "./sim/timer";
+import { renderMissionStatus, renderSuccess } from "./views/mission";
+import { renderDatasheet } from "./views/datasheet";
+import { DATASHEET_SECTIONS } from "./datasheet-content";
+import { confirmCheck, getBookmarks, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderBook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/book";
 import { escapeHtml as e } from "./views/html";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
-const tourSteps = [
-  { target: "chapter-select", title: "tourEpisodesTitle", body: "tourEpisodesBody" },
-  { target: "open-ebook", title: "tourEbookTitle", body: "tourEbookBody" },
-  { target: "open-terminal", title: "tourTerminalTitle", body: "tourTerminalBody" },
-  { target: "start-chapter", title: "tourStartTitle", body: "tourStartBody" },
-] as const;
+function tourSteps() {
+  return [
+    { target: "chapter-select", title: t("tourEpisodesTitle"), body: t("tourEpisodesBody") },
+    { target: "open-datasheet", title: "DATASHEET", body: "Look up the Pocket's addresses and device registers here." },
+    { target: "open-book", title: "BOOK", body: "Study computer systems here. The original chapters and checks are all in this book." },
+    { target: "open-pc", title: "PC", body: t("tourTerminalBody") },
+    { target: "start-chapter", title: t("tourStartTitle"), body: t("tourStartBody") },
+  ];
+}
 const initial = parseRoute(location.hash);
 let state = createAppState(initial.route);
 let routeNotice = initial.notice;
+let buildAttempt = 0;
+let txTimer: number | undefined;
+let timerTimeout: number | undefined;
+let timerLedTimeout: number | undefined;
+let timerAttempt = 0;
 
 function canonicalizeRoute() {
   const hash = routeHash({ chapterId: state.active.id, view: state.view });
@@ -24,25 +39,30 @@ function canonicalizeRoute() {
 }
 
 function render() {
-  const focusId = document.activeElement instanceof HTMLElement ? document.activeElement.id : "";
+  const steps = tourSteps();
+  const focused = document.activeElement;
+  const focusId = focused instanceof HTMLElement ? focused.id : "";
+  const selection = focused instanceof HTMLInputElement && focused.selectionStart !== null
+    ? { start: focused.selectionStart, end: focused.selectionEnd } : null;
   const chapter = currentChapter(state);
-  const complete = missionComplete(state);
   document.documentElement.lang = getLang();
   document.title = t("docTitleFmt", {
     label: chapter.id === 0 ? t("prologue") : t("episodeFmt", { n: String(chapter.id).padStart(2, "0") }),
     title: chapterTitle(chapter),
   });
   app.innerHTML = `<div class="app-shell">
-    ${state.view === "ebook" || state.view === "terminal" ? "" : `<div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">${e(t("episodeLabel"))}</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? t("prologue") : t("episodeFmt", { n: String(item.id).padStart(2, "0") })} — ${e(chapterTitle(item))}</option>`).join("")}</select></div><div class="top-bar-actions"><button id="reset-mission" class="reset-button" data-action="reset">${e(t("resetEpisode"))} <span aria-hidden="true">↺</span></button><button id="lang-toggle" class="reset-button" data-action="lang">${e(t("langToggleLabel"))}</button></div></div>`}
+    <div class="top-bar"${state.ui.introDismissed ? "" : " inert"}><div class="chapter-select"><label class="eyebrow" for="chapter-select">${e(t("episodeLabel"))}</label><select id="chapter-select">${chapters.map((item) => `<option value="${item.id}" ${item.id === chapter.id ? "selected" : ""}>${item.id === 0 ? t("prologue") : t("episodeFmt", { n: String(item.id).padStart(2, "0") })} — ${e(chapterTitle(item))}</option>`).join("")}</select></div><div class="top-bar-actions"><button id="reset-mission" class="reset-button" data-action="reset">${e(t("resetEpisode"))} <span aria-hidden="true">↺</span></button><button id="lang-toggle" class="reset-button" data-action="lang">${e(t("langToggleLabel"))}</button></div></div>
+    <nav class="view-nav" aria-label="Views"${state.ui.introDismissed ? "" : " inert"}>${(["station", "pc", "datasheet", "book"] as const).map((view) => `<button class="view-tab${state.view === view ? " active" : ""}" data-action="view" data-view="${view}"${state.view === view ? ' aria-current="page"' : ""}>${viewLabel(view)}</button>`).join("")}</nav>
     <main id="main-content" tabindex="-1"${state.ui.introDismissed ? "" : " inert"}>
       ${routeNotice ? `<p class="route-notice">${e(routeNotice)}</p>` : ""}
-      ${state.active.id === 1 && complete ? `<section class="success-banner" aria-label="Repair complete"><span class="success-check" aria-hidden="true">✓</span><div><h2>${e(chapter.mission.successMessage)}</h2><p>${e(t("successNextEpisode"))}</p></div></section>` : ""}
+      <div id="mission-status">${renderMissionStatus(state)}</div>
+      <div id="mission-success">${renderSuccess(state)}</div>
       ${state.ui.feedback ? `<div class="feedback"><span class="eyebrow">${e(t("benchFeedback"))}</span><p>${e(state.ui.feedback)}</p></div>` : ""}
-      <div id="view-content">${state.view === "station" ? renderStation() : state.view === "terminal" ? renderTerminal() : renderEbook(state)}</div>
+      <div id="view-content">${state.view === "station" ? renderStation(state) : state.view === "pc" ? renderPc(state) : state.view === "pocket" ? renderPocket(state) : state.view === "datasheet" ? renderDatasheet(state) : renderBook(state)}</div>
     </main>
-    ${state.active.id === 0 && state.ui.introDismissed && state.view === "station" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === tourSteps.length - 1 ? " tour-glow" : ""}" data-action="start">${e(t("startEpisode01"))} <span aria-hidden="true">→</span></button>` : ""}
+    ${state.active.id === 0 && state.ui.introDismissed && state.view === "station" ? `<button id="start-chapter" class="start-fab button primary${state.ui.tourStep === steps.length - 1 ? " tour-glow" : ""}" data-action="start">${e(t("startEpisode01"))} <span aria-hidden="true">→</span></button>` : ""}
     ${state.ui.introDismissed ? "" : `<div class="popup-overlay"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mission-title">
-      <span class="eyebrow">${e(chapter.id === 0 ? t("prologueEyebrow") : t("episode01Eyebrow"))}</span>
+      <span class="eyebrow">${e(chapter.id === 0 ? t("prologueEyebrow") : `REPAIR ${String(chapter.id).padStart(2, "0")} / ${chapter.title.toUpperCase()}`)}</span>
       <h1 id="mission-title" tabindex="-1">${e(chapterTitle(chapter))}</h1>
       <p class="mission-observation">${e(chapterMission(chapter).initialObservation)}</p>
       <p><strong>${e(chapterMission(chapter).summary)}</strong></p>
@@ -50,19 +70,195 @@ function render() {
     </div></div>`}
   </div>`;
   const tour = state.active.id === 0 && state.ui.introDismissed && state.ui.tourStep !== null
-    ? { ...tourSteps[state.ui.tourStep]!, index: state.ui.tourStep }
+    ? { ...steps[state.ui.tourStep]!, index: state.ui.tourStep }
     : null;
   if (tour) {
-    app.insertAdjacentHTML("beforeend", `<div class="tour-card" role="status"><span class="eyebrow">${e(t("guideFmt", { i: tour.index + 1, n: tourSteps.length }))}</span><strong>${e(t(tour.title))}</strong><p>${e(t(tour.body))}</p><div class="tour-actions"><button id="tour-skip" class="text-button" data-action="tour-skip">${e(t("tourSkip"))}</button><button id="tour-next" class="button primary" data-action="tour-next">${e(t(tour.index === tourSteps.length - 1 ? "tourDone" : "tourNext"))}</button></div></div>`);
+    app.insertAdjacentHTML("beforeend", `<div class="tour-card" role="status"><span class="eyebrow">${e(t("guideFmt", { i: tour.index + 1, n: steps.length }))}</span><strong>${e(tour.title)}</strong><p>${e(tour.body)}</p><div class="tour-actions"><button id="tour-skip" class="text-button" data-action="tour-skip">${e(t("tourSkip"))}</button><button id="tour-next" class="button primary" data-action="tour-next">${e(t(tour.index === steps.length - 1 ? "tourDone" : "tourNext"))}</button></div></div>`);
     document.getElementById(tour.target)?.classList.add("tour-spotlight");
   }
   const focusTarget = focusId ? document.getElementById(focusId) : null;
-  if (focusTarget) focusTarget.focus({ preventScroll: true });
+  if (focusTarget) {
+    focusTarget.focus({ preventScroll: true });
+    if (selection && focusTarget instanceof HTMLInputElement) focusTarget.setSelectionRange(selection.start, selection.end);
+  }
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
   if (!state.ui.introDismissed) document.getElementById("got-it")?.focus();
 }
 
 function announce(message: string) { announcement.textContent = message; }
+
+function refreshLights() {
+  document.querySelectorAll(".uart-tx-light").forEach((light) => light.classList.toggle("tx-pulse", state.ui.txActive));
+  document.querySelectorAll(".timer-light").forEach((light) => light.classList.toggle("on", state.ui.timerLedActive));
+  const txStatus = document.getElementById("tx-status");
+  if (txStatus) txStatus.textContent = state.ui.txActive ? "transmitting" : "idle";
+  const timerStatus = document.getElementById("pocket-timer-status");
+  if (timerStatus) timerStatus.textContent = state.ui.timerLedActive ? "tick" : "waiting";
+}
+
+function refreshTimerObservation(completedNow: boolean) {
+  if (state.active.id !== 3) return;
+  const mission = document.getElementById("mission-status");
+  if (mission) mission.innerHTML = renderMissionStatus(state);
+  if (completedNow) {
+    const success = document.getElementById("mission-success");
+    if (success) success.innerHTML = renderSuccess(state);
+    announce(currentChapter(state).mission.successMessage);
+  }
+  const serial = document.getElementById("serial-output");
+  if (serial) serial.textContent = state.active.machine.terminalOutput;
+  const preview = document.getElementById("station-serial");
+  if (preview) preview.textContent = stationSerialSummary(state);
+  const observed = document.getElementById("timer-observed");
+  if (observed) observed.textContent = formatInterval(state.active.machine.observedIntervalMs);
+  const count = document.getElementById("timer-count");
+  if (count) count.textContent = String(state.active.machine.tickCount);
+  refreshLights();
+}
+
+function stopTimer() {
+  timerAttempt++;
+  window.clearTimeout(timerTimeout);
+  window.clearTimeout(timerLedTimeout);
+  timerTimeout = undefined;
+  state.ui.timerLedActive = false;
+  if (state.active.id === 3) state.ui.txActive = false;
+  refreshLights();
+}
+
+function startTimer() {
+  if (state.active.id !== 3 || !state.ui.introDismissed || state.ui.buildPhase !== "idle" || timerTimeout !== undefined) return;
+  const attempt = timerAttempt;
+  timerTimeout = window.setTimeout(() => {
+    if (attempt !== timerAttempt || state.active.id !== 3 || state.ui.buildPhase !== "idle") return;
+    timerTimeout = undefined;
+    const wasComplete = missionComplete(state);
+    state.active.machine = recordTimerTick(state.active.machine, performance.now());
+    state.ui.txActive = true;
+    state.ui.timerLedActive = true;
+    refreshTimerObservation(!wasComplete && missionComplete(state));
+    window.clearTimeout(timerLedTimeout);
+    const ui = state.ui;
+    timerLedTimeout = window.setTimeout(() => {
+      if (state.ui !== ui || attempt !== timerAttempt) return;
+      ui.txActive = false;
+      ui.timerLedActive = false;
+      refreshLights();
+    }, 180);
+    startTimer();
+  }, timerIntervalMs(state.active.machine.clockMhz));
+}
+
+function pulseTx() {
+  window.clearTimeout(txTimer);
+  const ui = state.ui;
+  ui.txActive = true;
+  render();
+  txTimer = window.setTimeout(() => {
+    if (state.ui !== ui) return;
+    ui.txActive = false;
+    refreshLights();
+  }, 650);
+}
+
+async function buildAndFlash() {
+  if (state.active.id === 0 || state.ui.buildPhase !== "idle") return;
+  const chapterId = state.active.id;
+  const fileName = currentChapter(state).computer.source!.fileName;
+  const binaryName = fileName.replace(/\.S$/, ".bin");
+  const byte = parseByte(state.ui.draftByte);
+  const memory = readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd);
+  const clock = parseClock(state.ui.draftClock);
+  const error = chapterId === 1 && byte === null ? "Enter one hex byte from 0x00 to 0xFF."
+    : chapterId === 2 ? memory.error
+    : chapterId === 3 && clock === null ? "Choose a supported clock source." : "";
+  if (error) {
+    state.ui.feedback = `Build stopped. ${error} The running firmware is unchanged.`;
+    render();
+    document.getElementById(chapterId === 1 ? "byte-value" : chapterId === 2 ? "range-start" : "clock-source")?.focus();
+    announce(state.ui.feedback);
+    return;
+  }
+  if (chapterId === 3) stopTimer();
+  const attempt = ++buildAttempt;
+  const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+  state.ui.feedback = "";
+  state.ui.buildPhase = "building";
+  state.ui.buildLog = ["BUILD..."];
+  render();
+  announce(`Building ${fileName}.`);
+  await wait(400);
+  if (attempt !== buildAttempt || state.active.id !== chapterId) return;
+  state.ui.buildPhase = "flashing";
+  state.ui.buildLog = ["BUILD...", `✓ ${binaryName}`, "", "FLASH...", "░░░░░░░░░░ 0%"];
+  render();
+  await wait(500);
+  if (attempt !== buildAttempt || state.active.id !== chapterId) return;
+  state.ui.buildPhase = "booting";
+  state.ui.buildLog = ["BUILD...", `✓ ${binaryName}`, "", "FLASH...", "██████████ 100%", "", "RESET..."];
+  render();
+  await wait(400);
+  if (attempt !== buildAttempt || state.active.id !== chapterId) return;
+  if (state.active.id === 1) {
+    state.active.machine = rebootTarget(flashFirmware(state.active.machine, byte!));
+    state.ui.draftByte = formatByte(byte!);
+    const received = serialDisplay(state.active.machine.terminalOutput);
+    state.ui.feedback = missionComplete(state) ? "The Pocket sent A. UART PASS. The display can wait for its own repair."
+      : `The Pocket sent ${received}. Expected A. Check the byte in boot.S and the ASCII table in DATASHEET.`;
+  } else if (state.active.id === 2) {
+    state.active.machine = flashMemoryFirmware(state.active.machine, memory.range!);
+    state.ui.draftRangeStart = formatAddress(memory.range!.start);
+    state.ui.draftRangeEnd = formatAddress(memory.range!.end);
+    state.ui.feedback = state.active.machine.passed ? `Installed range passes: ${state.active.machine.bytesChecked} bytes checked, 0 errors. RAM PASS.`
+      : "The installed test still overlaps MEMTEST WORKAREA. Compare the failed addresses with the memory map.";
+  } else {
+    state.active.machine = flashTimerFirmware(state.active.machine, clock!);
+    state.ui.feedback = `Clock source installed: ${clock} MHz. Observe two ticks to measure the new interval.`;
+  }
+  state.ui.buildPhase = "idle";
+  state.ui.buildLog.push("✓ Pocket booted");
+  if (state.active.id === 3) { render(); startTimer(); }
+  else pulseTx();
+  announce(state.ui.feedback);
+}
+
+function resetTarget() {
+  if (state.active.id === 0 || state.ui.buildPhase !== "idle") return;
+  if (state.active.id === 1) {
+    state.active.machine = rebootTarget(state.active.machine);
+    state.ui.feedback = `Pocket reset. Received ${serialDisplay(state.active.machine.terminalOutput)} from the installed firmware.`;
+  } else if (state.active.id === 2) {
+    state.active.machine = rebootMemoryTarget(state.active.machine);
+    state.ui.feedback = "Pocket reset. The RAM diagnostic ran using the installed test range.";
+  } else {
+    stopTimer();
+    state.active.machine = rebootTimerTarget(state.active.machine);
+    state.ui.feedback = `Pocket reset. The timer still uses the installed ${state.active.machine.clockMhz} MHz clock source.`;
+  }
+  if (state.active.id === 3) { render(); startTimer(); }
+  else pulseTx();
+  announce(state.ui.feedback);
+}
+
+function runMemoryDiagnostic() {
+  if (state.active.id !== 2 || state.ui.buildPhase !== "idle") return;
+  const { range, error } = readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd);
+  if (!range) {
+    state.ui.feedback = `Diagnostic stopped. ${error}`;
+    render();
+    document.getElementById("range-start")?.focus();
+    announce(state.ui.feedback);
+    return;
+  }
+  state.active.machine = runMemoryTest(state.active.machine, range);
+  state.ui.draftRangeStart = formatAddress(range.start);
+  state.ui.draftRangeEnd = formatAddress(range.end);
+  state.ui.feedback = state.active.machine.passed
+    ? `RAM PASS. ${state.active.machine.bytesChecked} bytes checked, 0 errors. Build & Flash keeps this range for the next reset.`
+    : "The failed addresses moved, but they remain inside MEMTEST WORKAREA. Compare the range with the reserved memory.";
+  pulseTx();
+  announce(state.ui.feedback);
+}
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -99,10 +295,13 @@ window.addEventListener("hashchange", () => {
     return;
   }
   const parsed = parseRoute(location.hash);
+  if (parsed.route.chapterId !== state.active.id) { buildAttempt++; stopTimer(); }
   state = navigate(state, parsed.route);
   routeNotice = parsed.notice;
   canonicalizeRoute();
   render();
+  startTimer();
+  window.scrollTo({ top: 0 });
   announce(routeNotice || t("announceViewFmt", {
     label: state.active.id === 0 ? t("prologue") : t("episodeFmt", { n: String(state.active.id).padStart(2, "0") }),
     title: chapterTitle(currentChapter(state)),
@@ -116,7 +315,34 @@ app.addEventListener("click", (event) => {
   switch (button.dataset.action) {
     case "view": {
       const view = views.find((item) => item === button.dataset.view);
+      if (view === "datasheet") {
+        const section = DATASHEET_SECTIONS.find((item) => item.id === button.dataset.section);
+        if (section) state.ui.datasheetSection = section.id;
+      }
       if (view) goTo(state.active.id, view);
+      return;
+    }
+    case "build-flash":
+      void buildAndFlash();
+      return;
+    case "run-memory":
+      runMemoryDiagnostic();
+      return;
+    case "next-episode": {
+      const next = Number(button.dataset.episode);
+      if (next === 2 || next === 3) goTo(next, "station");
+      return;
+    }
+    case "reset-target":
+      resetTarget();
+      return;
+    case "datasheet-section": {
+      const section = DATASHEET_SECTIONS.find((item) => item.id === button.dataset.section);
+      if (!section) return;
+      state.ui.datasheetSection = section.id;
+      render();
+      document.getElementById("datasheet-title")?.focus({ preventScroll: true });
+      announce(section.title);
       return;
     }
     case "lang":
@@ -126,26 +352,28 @@ app.addEventListener("click", (event) => {
       return;
     case "start":
       if (state.active.id === 0) state.active.machine.started = true;
-      goTo(1, state.view);
+      goTo(1, "station");
       return;
     case "dismiss":
       state.ui.introDismissed = true;
       if (state.active.id === 0) state.ui.tourStep = 0;
       render();
-      document.getElementById("main-content")?.focus();
-      announce(t("announceDismiss"));
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+      if (state.active.id === 1 || state.active.id === 2) pulseTx();
+      if (state.active.id === 3) startTimer();
+      announce(state.active.id === 0 ? "The PC, Pocket, DATASHEET and BOOK are on the station." : chapterMission(currentChapter(state)).summary);
       return;
     case "tour-next": {
       if (state.ui.tourStep === null) return;
       const next = state.ui.tourStep + 1;
-      state.ui.tourStep = next >= tourSteps.length ? null : next;
+      state.ui.tourStep = next >= tourSteps().length ? null : next;
       render();
       if (state.ui.tourStep === null) {
         document.getElementById("main-content")?.focus();
         announce(t("announceTourDone"));
       } else {
         document.getElementById("tour-next")?.focus();
-        announce(t(tourSteps[state.ui.tourStep]!.body));
+        announce(tourSteps()[state.ui.tourStep]!.body);
       }
       return;
     }
@@ -194,6 +422,8 @@ app.addEventListener("click", (event) => {
       return;
     }
     case "reset":
+      buildAttempt++;
+      stopTimer();
       state = resetMission(state);
       state.ui.feedback = t("resetFeedback");
       break;
@@ -206,7 +436,11 @@ app.addEventListener("click", (event) => {
 app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
-    if (target.value === "0" || target.value === "1") goTo(Number(target.value) as ChapterId, state.view);
+    if (["0", "1", "2", "3"].includes(target.value)) goTo(Number(target.value) as ChapterId, state.view);
+  } else if (target instanceof HTMLSelectElement && target.id === "clock-source" && state.active.id === 3 && state.ui.buildPhase === "idle") {
+    if (parseClock(target.value) !== null) state.ui.draftClock = target.value;
+    const status = document.getElementById("source-status");
+    if (status) status.textContent = sourceStatus(state);
   } else if (target instanceof HTMLInputElement && target.dataset.checkChoice) {
     const q = getCurrentCheck();
     if (!q || q.kind === "open") return;
@@ -223,6 +457,25 @@ app.addEventListener("change", (event) => {
 
 app.addEventListener("input", (event) => {
   const target = event.target;
+  if (target instanceof HTMLInputElement && target.id === "byte-value" && state.active.id === 1 && state.ui.buildPhase === "idle") {
+    state.ui.draftByte = target.value;
+    target.setAttribute("aria-invalid", String(parseByte(target.value) === null));
+    const status = document.getElementById("source-status");
+    if (status) status.textContent = sourceStatus(state);
+    return;
+  }
+  if (target instanceof HTMLInputElement && (target.id === "range-start" || target.id === "range-end") && state.active.id === 2 && state.ui.buildPhase === "idle") {
+    if (target.id === "range-start") state.ui.draftRangeStart = target.value;
+    else state.ui.draftRangeEnd = target.value;
+    target.setAttribute("aria-invalid", String(readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd).range === null));
+    const preview = document.getElementById(`source-preview-${target.id}`);
+    if (preview) preview.textContent = target.value;
+    const status = document.getElementById("source-status");
+    if (status) status.textContent = sourceStatus(state);
+    const inspector = document.getElementById("episode-inspector");
+    if (inspector) inspector.innerHTML = renderInspector(state);
+    return;
+  }
   if (target instanceof HTMLInputElement && target.id === "ebook-search") {
     setEbookQuery(target.value);
     const toc = document.getElementById("ebook-toc");
@@ -240,4 +493,6 @@ document.querySelector<HTMLAnchorElement>(".skip-link")?.addEventListener("click
 
 canonicalizeRoute();
 render();
+window.addEventListener("pagehide", stopTimer);
+window.addEventListener("pageshow", startTimer);
 if (routeNotice) announce(routeNotice);

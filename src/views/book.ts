@@ -10,7 +10,7 @@ function book(): readonly EbookChapter[] {
 }
 import { EBOOK_BOOKMARKS } from "../ebook-bookmarks";
 
-// EBOOK reader state lives outside episode state on purpose:
+// BOOK reader state lives outside episode state on purpose:
 // the book is identical no matter which episode opens it.
 let ebookSlug: string | null = null;
 let ebookQuery = "";
@@ -54,7 +54,9 @@ export function getEbookTitle(): string {
 }
 
 export function openEbookChapter(slug: string): void {
-  if (book().some((ch) => ch.slug === slug)) ebookSlug = slug;
+  if (book().some((ch) => ch.slug === slug)) {
+    ebookSlug = slug;
+  }
   checkIndex = 0;
 }
 
@@ -119,7 +121,7 @@ function bookmarkBox(episodeId: number): string {
   return `<section class="ebook-bookmarks" aria-label="${t("ebookForThisEpisode")}"><span class="eyebrow">${t("ebookForThisEpisode")}</span><ul>${items.map((ch) => `<li><button class="text-button" data-action="ebook-open" data-slug="${ch.slug}">★ ${e(ch.title)}</button></li>`).join("")}</ul></section>`;
 }
 
-export function renderEbook(state: AppState): string {
+export function renderBook(state: AppState): string {
   const slug = getEbookSlug();
   const ch = book().find((c) => c.slug === slug) ?? book()[0]!;
   const body = ch.html.replace(/^<h1>.*?<\/h1>\n?/, "");
@@ -129,14 +131,15 @@ export function renderEbook(state: AppState): string {
   const next = book()[index + 1];
   return `<div class="ebook">
     <aside class="ebook-side" aria-label="Book contents">
-      <button id="ebook-back" class="text-button" data-action="view" data-view="station">${t("back")}</button>
+      <button id="ebook-back" class="text-button" data-action="view" data-view="${state.active.id !== 0 ? "pc" : "station"}">${state.active.id !== 0 ? "← BACK TO PC" : t("back")}</button>
+      <p><button class="text-button" data-action="view" data-view="datasheet">DATASHEET ↗</button></p>
       ${bookmarkBox(state.active.id)}
       <label class="field-label" for="ebook-search">${t("ebookSearchLabel")}</label>
       <input id="ebook-search" type="search" value="${e(getEbookQuery())}" placeholder="${t("ebookSearchPlaceholder")}" autocomplete="off">
       <nav aria-label="${t("ebookChaptersNav")}"><div id="ebook-toc">${tocList(slug, bookmarks)}</div></nav>
     </aside>
     <article class="ebook-page" aria-labelledby="ebook-title">
-      <span class="eyebrow">${t("ebookWordmark")}</span>
+      <span class="eyebrow">BOOK / COMPUTER SYSTEMS</span>
       <h1 id="ebook-title" tabindex="-1">${e(ch.title)}</h1>
       <nav class="ebook-outline" aria-label="${e(ch.title)}"><ul>${ch.headings.filter((h) => h.depth === 2).map((h) => `<li><button class="text-button" data-action="ebook-section" data-heading="${e(h.id)}">${e(h.text)}</button></li>`).join("")}</ul></nav>
       <div class="ebook-body">${body}</div>

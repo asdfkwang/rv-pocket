@@ -10,55 +10,58 @@ The development objective is a reproducible release: install a clean image, appl
 
 The failures are software, configuration, sequencing, or integration defects unless explicitly stated otherwise. A failed memory test is not automatically a damaged RAM chip, and editing software must not magically repair physical damage.
 
-## Two independent development paths
+## Development connections
 
-| Path | Starting condition | What it can establish |
-| --- | --- | --- |
-| Development/debug link | Already attached and working | Load or launch the supplied diagnostic; inspect its completion, RAM log, and instrumented transmit events |
-| UART serial cable | Disconnected in Episode 01 | Carry transmitted board characters to the separate host receive terminal |
+The development PC can install the supplied boot project and reset the Pocket. The UART cable is already connected in Episode 01 and carries the Pocket's transmitted byte to the PC's serial terminal. Build logs and inspection text never enter the receive terminal. The final product will no longer depend on the development PC for initialization.
 
-The developer trace is a provided debugging instrument. It is not output secretly delivered over the broken UART connection. A trace observation and a received serial character are different evidence. The final product will no longer depend on the development link for initialization.
+## Episode 01 — Wrong Byte
 
-## Episode 01 assumptions
+- The parents' last `boot.S` project is open. Power, UART initialization, and fixed 115200-baud serial settings are supplied.
+- The inherited firmware sends `0x42`, observed as `B`. The expected output is `A`.
+- Only the byte in `li t1, [0x42]` is editable. This is a constrained simulation, with no full assembler, compiler, or emulator.
+- The UART DATA address is `0xD4110000`. A 32-bit store sends bits [7:0] as one serial byte; upper bits are ignored.
+- Editing a byte does not change the installed firmware. Build & Flash displays BUILD, FLASH, and RESET stages, then boots the edited byte.
+- Invalid input leaves installed firmware and received output unchanged. Any valid byte can be tested; only `0x41` received as `A` completes the repair.
+- RESET on the PC or Pocket retransmits the installed byte and does not flash the draft. Reset episode restores inherited `B`, draft `0x42`, and an empty build log, preserving the selected view.
+- The terminal displays the latest boot's received byte. Control bytes use visible escaped forms. The Pocket's TX indicator pulses on boot; the display remains black.
+- Changing views preserves the attempt. Resetting or selecting a different episode cancels an unfinished Build & Flash attempt.
+- There is no reading, quiz, or forced-order gate. Later episodes start with earlier repairs represented in their own initial fixtures.
 
-- Power, the diagnostic launcher, the small working RAM region, and the UART transmitter are functional.
-- UART initialization and matching serial settings are supplied. Baud rate, parity, FIFO configuration, interrupts, and instruction encoding are outside this repair.
-- A diagnostic run generates one byte, decimal `65` / hexadecimal `0x41`, displayed as `A`.
-- Its initial destination is `RAM log`. The other editable destination is `UART transmit`.
-- `RAM log` appends one byte to the diagnostic's buffer. It does not cause a UART transmit event.
-- `UART transmit` sends one byte, including when the serial cable is disconnected. A disconnected host receives nothing. Reconnecting later does not replay the missed transmission.
-- Connecting a cable or changing the destination never runs the diagnostic implicitly.
-- The receive terminal contains only actual received board bytes. Inspection text, feedback, and the RAM log never enter it. Local echo is disabled.
-- Changing the destination affects the next run; recorded runs retain their original settings and observations.
+## DATASHEET and BOOK
 
-### Deterministic observation table
+DATASHEET is the device reference: memory-map ranges, UART register behavior, ASCII character codes, and timer clock behavior. BOOK contains the existing computer-systems study chapters, search, and checks. They are separate station objects and views. Device addresses are taken from DATASHEET; illustrative textbook examples are not a replacement for the device specification.
 
-Counts below are increments for one run, not accumulated totals.
+## Episode 02 — False Memory Failure
 
-| Destination | Cable | RAM log append | UART transmit events | Host receive append |
-| --- | --- | --- | --- | --- |
-| RAM log | Disconnected | `A` | 0 | nothing |
-| RAM log | Connected | `A` | 0 | nothing |
-| UART transmit | Disconnected | nothing | 1 | nothing |
-| UART transmit | Connected | nothing | 1 | `A` |
+- UART is already repaired. The supplied `memtest.S` diagnostic initially tests START `0x00000000` to excluded END `0x00002000`.
+- MEMTEST WORKAREA occupies `[0x00001800, 0x00001A00)`. Destructive testing over any part of it creates false failures; repeated runs vary the reported addresses within the overlap.
+- A valid range is non-empty and inside the diagnostic RAM window. Any such range that excludes the workspace passes. `[0x00001A00, 0x00002000)` reports 1536 bytes checked and 0 errors.
+- RUN tests the draft range. Build & Flash installs and runs that range; RESET reruns the installed range while preserving the draft. Invalid input leaves the installed range and last result intact.
+- Serial output and the Pocket diagnostic readout show the last test's result. RAM PASS completes the episode without a reading or quiz gate.
 
-Completion requires a UART destination, a connected cable, and at least one actual received `A` in the current attempt. There is no reading, quiz, or forced-order gate. Reset restores the disconnected cable, RAM destination, empty records, and empty terminal. View changes preserve the attempt.
+## Episode 03 — Wrong Clock
+
+- UART and RAM are already repaired. The supplied `timer.S` diagnostic uses TIMER at `0xA2180000` and a fixed 10,000,000-tick target.
+- The active counter rate equals the installed clock source: 5 MHz gives two seconds, 10 MHz gives one second, and 20 MHz gives half a second per diagnostic tick.
+- The clock selector edits a draft. Build & Flash installs it and restarts the diagnostic. RESET restarts measurement with the installed source, preserving the draft.
+- Each live tick sends a serial line and pulses the TX and timer indicators. Observed delay is measured with the browser's monotonic clock between consecutive ticks.
+- Applying 10 MHz and observing an interval within 200 ms of one second completes TIMER PASS. A completed observation stays verified until RESET or flashing; later browser scheduling delays do not revoke it.
+- Tick updates preserve reading and editing controls. Changing views leaves the diagnostic running; leaving the episode cancels its pending ticks.
+- All three checks produce BASIC DIAGNOSTICS COMPLETE. The display remains black, awaiting its own bring-up episode.
 
 ## Teaching memory map
 
-These addresses are invented for RV-01. They are not addresses required by the RISC-V ISA, and they do not specify a standard commercial UART.
+These addresses are invented for RV Pocket and are not prescribed by the RISC-V ISA. The early diagnostic memory window is not a complete Linux system memory map.
 
 | Region | Address / range | Meaning |
 | --- | --- | --- |
-| Main RAM | `0x80000000–0x8fffffff` | Planned 256 MiB physical address range; the prototype models only the locations its current episode needs |
-| Diagnostic work area | `0x80000000–0x80000fff` | Reserved for the supplied diagnostic; never include it in a destructive RAM test |
-| Diagnostic RAM log | Starts at `0x80001000` | A byte buffer; the named log operation advances to the next slot |
-| Safe introductory RAM test window | `0x80002000–0x80002fff` | A supplied scratch window for Episode 02 |
-| UART resource | `0x10000000–0x10000fff` | Device space, not ordinary RAM |
-| UART `TX_DATA` | Base + `0x00` | Byte write requests transmission; do not read it as a stored RAM byte |
-| UART `STATUS` | Base + `0x04` | 32-bit read; bit 0 is `TX_READY`; supplied as ready for Episode 01 |
+| Diagnostic RAM window | `0x00000000–0x00001FFF` | 8 KiB teaching window for the supplied diagnostics |
+| MEMTEST WORKAREA | `0x00001800–0x000019FF` | Reserved diagnostic workspace inside RAM; exclude from destructive tests |
+| Safe upper test window | `0x00001A00–0x00001FFF` | 1536 bytes outside the diagnostic workspace |
+| UART DATA | `0xD4110000` | Write-only device register; a 32-bit store transmits the low byte |
+| TIMER | `0xA2180000` | Diagnostic counter driven by the installed 5, 10, or 20 MHz source |
 
-Episode 01 exposes named destinations rather than numeric addresses. The Ebook can use the map to explain why those destinations differ. Address entry is introduced only when a later episode needs it. Other peripherals receive exact register contracts with their episode specifications, not speculative register banks now.
+The prototype simulates UART transmission, workspace overlap during memory diagnostics, and clock-dependent timer intervals in Episodes 01–03. Additional registers and the full system memory map remain future work.
 
 ## Boundaries for later material
 

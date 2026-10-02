@@ -24,7 +24,7 @@ The game opening. Understand what was left behind and learn the interface.
 
 - Story setup.
 - Episode selector.
-- STATION / EBOOK views.
+- STATION / PC / DATASHEET / BOOK views; inspect Pocket from STATION.
 - No hardware lesson or quiz; the Manual contains interface help only.
 - Start Episode 01 action.
 
@@ -34,35 +34,35 @@ The game opening. Understand what was left behind and learn the interface.
 
 ## 01–03: Trustworthy observation
 
-### Episode 01 — Output in the Wrong Place
+### Episode 01 — Wrong Byte
 
-- **증상:** The diagnostic runs, but nothing arrives outside the machine. A RAM log shows output that never reaches any receiver.
-- **실제 원인:** The diagnostic output is directed at the RAM log, and the UART cable is disconnected. Execution works; the transmission path does not.
-- **관찰 가능한 증거:** RAM log contents vs. an empty receiver; cable state shown in the station.
-- **시험할 가설:** The diagnostic never ran / the output went to the wrong destination / the cable path is broken.
-- **수정할 대상:** The limited diagnostic settings (output destination) and the UART cable connection. The station's development connection is for running diagnostics and reading internal records; the UART cable is for receiving output.
-- **성공 판정:** The first `A` is actually received over UART — a RAM-log `A` alone does not count, nor does connecting the cable alone.
-- **다음 문제와의 연결:** A trusted output path lets the player believe later diagnostic results.
+- **증상:** The parents' Pocket powers on, and the last `boot.S` project is open. The connected serial terminal receives `B`; the expected output is `A`.
+- **실제 원인:** The boot code sends the wrong byte, `0x42`, to the UART data register at the fictional RV Pocket address `0xD4110000`.
+- **관찰 가능한 증거:** The source byte, received character, connected cable, and a brief TX LED pulse on boot. The display stays black.
+- **시험할 가설:** A different byte in the same boot code produces a different received character.
+- **수정할 대상:** Only the immediate value in `li t1, [0x42]`. The remaining source is locked. DATASHEET supplies `A = 0x41` and `B = 0x42`; BOOK provides separate study chapters and checks.
+- **성공 판정:** Build & Flash completes, the Pocket reboots, and the PC receives `A`, producing `UART PASS`. Editing without flashing does not change the output; Reset alone reruns the installed firmware.
+- **다음 문제와의 연결:** The serial terminal becomes the shared observation tool for Episode 02's memory diagnostic. Episode 01 requires no quiz or reading gate.
 
-### Episode 02 — False Failures
+### Episode 02 — False Memory Failure
 
-- **증상:** The memory check reports errors that come and go.
+- **증상:** UART already passes, but `memtest.S` reports different RAM failure addresses on repeated runs.
 - **실제 원인:** The check overwrites its own working area, so it manufactures the failures it reports.
-- **관찰 가능한 증거:** Error addresses overlapping the check's own range; clean results when the range is narrowed.
+- **관찰 가능한 증거:** Failures move within MEMTEST WORKAREA, `0x00001800–0x000019FF`, inside the 8 KiB diagnostic RAM window. The PC memory map shows the reserved area and highlights overlap with the draft range.
 - **시험할 가설:** The RAM is broken / the check range covers its own workspace.
-- **수정할 대상:** The check range.
-- **성공 판정:** The memory check passes over the corrected range.
+- **수정할 대상:** START and END for the supplied diagnostic. END is excluded. RUN tries the draft range; Build & Flash installs it for RESET.
+- **성공 판정:** A non-empty RAM range excluding the workspace passes. For START `0x00001A00` and END `0x00002000`, serial output reports PASS, 1536 bytes checked, and 0 errors; the Pocket readout also shows PASS.
 - **다음 문제와의 연결:** Trusted memory inspection supports every later diagnosis.
 
 ### Episode 03 — Wrong Clock
 
-- **증상:** Diagnostic waits and output intervals drift apart.
-- **실제 원인:** The wrong time base: counter and time settings disagree.
-- **관찰 가능한 증거:** Counter readings vs. wall-clock expectations; interval measurements.
+- **증상:** UART and RAM pass, but serial ticks and the timer LED pulse every two seconds instead of one.
+- **실제 원인:** The supplied diagnostic waits for 10,000,000 counter ticks while its selected source is only 5 MHz.
+- **관찰 가능한 증거:** TIMER at `0xA2180000`, applied counter rate, fixed target ticks, configured delay, and elapsed browser time measured between serial ticks. DATASHEET gives the clock-to-delay relationship.
 - **시험할 가설:** The diagnostic logic is wrong / the counter runs at an unexpected rate.
-- **수정할 대상:** Counter and time settings.
-- **성공 판정:** Waits and output intervals match the configured timing.
-- **다음 문제와의 연결:** Reliable timing is the basis for input handling and animation later.
+- **수정할 대상:** Clock source: 5, 10, or 20 MHz. Build & Flash applies the selected source and restarts the diagnostic; the target remains 10,000,000 ticks.
+- **성공 판정:** After applying 10 MHz, at least two live ticks establish an observed interval within 200 ms of one second. TIMER PASS completes BASIC DIAGNOSTICS COMPLETE with UART and RAM already passing.
+- **다음 문제와의 연결:** Reliable timing is the basis for input handling and animation later. Display bring-up is next; the Pocket screen remains black in this episode.
 
 ---
 

@@ -1,5 +1,12 @@
-export type WorkbenchObjectId = "pocket" | "computer" | "manual" | "uart-cable";
-export type ComputerPanelId = "terminal" | "uart-task";
+export type WorkbenchObjectId = "pocket" | "computer" | "datasheet" | "book" | "uart-cable";
+import type { DatasheetSectionId } from "../datasheet-content";
+
+export type ComputerPanelId = "editor" | "terminal" | "memory-map" | "timer" | "target";
+
+export interface GuidedSource {
+  fileName: string;
+  lines: readonly { before: string; field?: "byte" | "range-start" | "range-end"; after?: string }[];
+}
 
 export interface ManualSection {
   id: string;
@@ -24,8 +31,9 @@ export interface Chapter<State> {
     initialObservation: string;
     successMessage: string;
   };
+  next?: { id?: number; title: string };
   workbench: { objects: readonly WorkbenchObjectId[] };
-  computer: { panels: readonly ComputerPanelId[] };
+  computer: { panels: readonly ComputerPanelId[]; source?: GuidedSource; editorHint?: string; datasheetSection?: DatasheetSectionId };
   manual: readonly ManualSection[];
   quiz: readonly QuizQuestion[];
   createInitialState: () => State;
