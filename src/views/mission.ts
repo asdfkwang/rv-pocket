@@ -1,4 +1,5 @@
 import { currentChapter, missionComplete, type AppState } from "../app-state";
+import { formatAddress, formatWord, WATCHED_RAM_ADDRESS } from "../sim/memory";
 import { formatInterval } from "../sim/timer";
 import { serialDisplay } from "../sim/uart";
 import { escapeHtml as e } from "./html";
@@ -7,14 +8,14 @@ export function renderMissionStatus(state: AppState): string {
   if (state.active.id === 0) return "";
   const chapter = currentChapter(state);
   const complete = missionComplete(state);
-  const expected = state.active.id === 1 ? "EXPECTED OUTPUT: A" : state.active.id === 2 ? "EXPECTED: RAM PASS" : "EXPECTED INTERVAL: 1.000 s";
-  const label = state.active.id === 3 ? "OBSERVED INTERVAL" : "RECEIVED";
+  const expected = state.active.id === 1 ? "EXPECTED OUTPUT: A"
+    : state.active.id === 2 ? `EXPECTED: A STORE AT ${formatAddress(WATCHED_RAM_ADDRESS)}`
+    : "EXPECTED INTERVAL: 1.000 s";
+  const label = state.active.id === 1 ? "RECEIVED" : state.active.id === 2 ? `RAM ${formatAddress(WATCHED_RAM_ADDRESS)}` : "OBSERVED INTERVAL";
   const received = state.active.id === 1 ? serialDisplay(state.active.machine.terminalOutput)
-    : state.active.id === 2 ? state.active.machine.passed ? "PASS" : "FAILED"
+    : state.active.id === 2 ? formatWord(state.active.machine.cells[WATCHED_RAM_ADDRESS] ?? 0)
     : formatInterval(state.active.machine.observedIntervalMs);
-  const statuses = [{ name: "UART", pass: state.active.id > 1 || complete }];
-  if (state.active.id >= 2) statuses.push({ name: "RAM", pass: state.active.id === 3 || complete }, { name: "TIMER", pass: state.active.id === 3 && complete });
-  return `<section class="mission-strip" aria-label="Episode objective"><div><span class="eyebrow">${String(chapter.id).padStart(2, "0")} / ${e(chapter.title.toUpperCase())}</span><strong>${expected}</strong></div><div><span class="eyebrow">${label}</span><strong class="received-byte${complete ? " pass" : ""}${state.active.id === 3 ? " interval" : ""}">${e(received)}</strong></div><div class="diagnostic-statuses">${statuses.map((status) => `<span class="repair-status${status.pass ? " pass" : ""}">${status.name} ${status.pass ? "PASS" : "?"}</span>`).join("")}</div></section>`;
+  return `<section class="mission-strip" aria-label="Episode objective"><div><span class="eyebrow">${String(chapter.id).padStart(2, "0")} / ${e(chapter.title.toUpperCase())}</span><strong>${expected}</strong></div><div><span class="eyebrow">${label}</span><strong class="received-byte${complete ? " pass" : ""}${state.active.id === 3 ? " interval" : ""}">${e(received)}</strong></div></section>`;
 }
 
 export function renderSuccess(state: AppState): string {

@@ -1,4 +1,6 @@
-export const UART_TX_ADDRESS = "0xD4110000";
+import { formatAddress, UART1_BASE } from "../platform";
+
+export const UART_TX_ADDRESS = formatAddress(UART1_BASE);
 export const INITIAL_BYTE = 0x42;
 export const EXPECTED_BYTE = 0x41;
 

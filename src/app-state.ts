@@ -4,9 +4,10 @@ import { chapter01 } from "./chapters/chapter-01";
 import { chapter02 } from "./chapters/chapter-02";
 import { chapter03 } from "./chapters/chapter-03";
 import { formatByte, INITIAL_BYTE, type UartMissionState } from "./sim/uart";
-import { formatAddress, RAM_START, RAM_END, type MemoryMissionState } from "./sim/memory";
-import type { TimerMissionState } from "./sim/timer";
+import { formatAddress, INITIAL_STORE_ADDRESS, type MemoryMissionState } from "./sim/memory";
+import { INITIAL_TIMEBASE_HZ, type TimerMissionState } from "./sim/timer";
 import type { DatasheetSectionId } from "./datasheet-content";
+import type { ModuleId } from "./chapters/types";
 
 export type View = "station" | "pc" | "pocket" | "datasheet" | "book";
 
@@ -26,13 +27,14 @@ export interface UiState {
   introDismissed: boolean;
   tourStep: number | null;
   draftByte: string;
-  draftRangeStart: string;
-  draftRangeEnd: string;
-  draftClock: string;
+  draftStoreAddress: string;
+  draftTimebase: string;
   buildPhase: "idle" | "building" | "flashing" | "booting";
   buildLog: string[];
   txActive: boolean;
   timerLedActive: boolean;
+  coverOpen: boolean;
+  coverModule: ModuleId;
   datasheetSection: DatasheetSectionId;
 }
 export interface AppState {
@@ -55,8 +57,9 @@ export function createAppState(route: Route): AppState {
     ui: {
       quizAnswers: {}, feedback: "", introDismissed: false, tourStep: null,
       draftByte: formatByte(INITIAL_BYTE), buildPhase: "idle", buildLog: [], txActive: false,
-      draftRangeStart: formatAddress(RAM_START), draftRangeEnd: formatAddress(RAM_END), draftClock: "5",
-      timerLedActive: false,
+      draftStoreAddress: formatAddress(INITIAL_STORE_ADDRESS), draftTimebase: String(INITIAL_TIMEBASE_HZ),
+      timerLedActive: false, coverOpen: false,
+      coverModule: chapters[route.chapterId].cover?.selected ?? "ram",
       datasheetSection: chapters[route.chapterId].computer.datasheetSection ?? "memory-map",
     },
   };

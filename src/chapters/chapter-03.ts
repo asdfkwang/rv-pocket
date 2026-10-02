@@ -7,20 +7,21 @@ export const chapter03: Chapter<TimerMissionState> = {
   title: "Wrong Clock",
   mission: {
     summary: "Make the Pocket's timer diagnostic send one tick every second.",
-    initialObservation: "UART and RAM are reliable. The next diagnostic should report every second, but the serial ticks and the Pocket's timer LED are too slow. Compare the clock setting with the delay you actually observe.",
+    initialObservation: "UART and RAM are reliable. The next diagnostic should report every second, but the serial ticks and the Pocket's timer LED are too slow. Does the program's timebase agree with the timer frequency in DATASHEET?",
     successMessage: "TIMER PASS — one tick every second.",
   },
   next: { title: "Black Screen First" },
+  cover: { modules: ["cpu", "ram"], selected: "ram" },
   workbench: { objects: ["pocket", "computer", "datasheet", "book", "uart-cable"] },
   computer: {
-    panels: ["editor", "terminal", "timer", "target"],
-    editorHint: "The target stays at 10,000,000 ticks. Change only the clock source below.",
+    panels: ["editor", "terminal"],
+    editorHint: "The diagnostic converts one second into ticks using PROGRAM TIMEBASE below. Match that setting to the hardware timer frequency.",
     datasheetSection: "timer",
     source: {
       fileName: "timer.S",
       lines: [
-        { before: `    li   t0, ${TIMER_ADDRESS}`, after: "  # TIMER" },
-        { before: "    li   t1, 10000000", after: "  # target ticks" },
+        { before: `    li   t0, ${TIMER_ADDRESS}`, after: "  # MTIME" },
+        { before: "    li   t1, ", field: "target-ticks", after: "  # ticks for one second" },
         { before: "" },
         { before: "timer_loop:" },
         { before: "    ...", after: "  # supplied diagnostic" },

@@ -37,31 +37,31 @@ The game opening. Understand what was left behind and learn the interface.
 ### Episode 01 — Wrong Byte
 
 - **증상:** The parents' Pocket powers on, and the last `boot.S` project is open. The connected serial terminal receives `B`; the expected output is `A`.
-- **실제 원인:** The boot code sends the wrong byte, `0x42`, to the UART data register at the fictional RV Pocket address `0xD4110000`.
+- **실제 원인:** The boot code sends the wrong byte, `0x42`, to the UART1 transmit register at the Atlantis-inspired address `0xD4110000`.
 - **관찰 가능한 증거:** The source byte, received character, connected cable, and a brief TX LED pulse on boot. The display stays black.
 - **시험할 가설:** A different byte in the same boot code produces a different received character.
 - **수정할 대상:** Only the immediate value in `li t1, [0x42]`. The remaining source is locked. DATASHEET supplies `A = 0x41` and `B = 0x42`; BOOK provides separate study chapters and checks.
-- **성공 판정:** Build & Flash completes, the Pocket reboots, and the PC receives `A`, producing `UART PASS`. Editing without flashing does not change the output; Reset alone reruns the installed firmware.
-- **다음 문제와의 연결:** The serial terminal becomes the shared observation tool for Episode 02's memory diagnostic. Episode 01 requires no quiz or reading gate.
+- **성공 판정:** Build & Flash completes, the Pocket reboots, and the PC receives `A`. Editing without flashing does not change the output; Reset alone reruns the installed firmware.
+- **다음 문제와의 연결:** The serial terminal becomes the shared observation tool for Episode 02. Episode 01 requires no quiz or reading gate, and shows no OPEN COVER: a simple execution experience with nothing internal to inspect.
 
-### Episode 02 — False Memory Failure
+### Episode 02 — Wrong Destination
 
-- **증상:** UART already passes, but `memtest.S` reports different RAM failure addresses on repeated runs.
-- **실제 원인:** The check overwrites its own working area, so it manufactures the failures it reports.
-- **관찰 가능한 증거:** Failures move within MEMTEST WORKAREA, `0x00001800–0x000019FF`, inside the 8 KiB diagnostic RAM window. The PC memory map shows the reserved area and highlights overlap with the draft range.
-- **시험할 가설:** The RAM is broken / the check range covers its own workspace.
-- **수정할 대상:** START and END for the supplied diagnostic. END is excluded. RUN tries the draft range; Build & Flash installs it for RESET.
-- **성공 판정:** A non-empty RAM range excluding the workspace passes. For START `0x00001A00` and END `0x00002000`, serial output reports PASS, 1536 bytes checked, and 0 errors; the Pocket readout also shows PASS.
-- **다음 문제와의 연결:** Trusted memory inspection supports every later diagnosis.
+- **증상:** UART already passes, and the next program should store a value in RAM at `0x00002000`. Instead the terminal keeps receiving a character, and the target word still reads `0x00000000`.
+- **실제 원인:** The destination in `store.S` is the UART1 DATA address, `0xD4110000`, so the store transmits instead of storing. Output alone cannot show where the value went, which is why this episode introduces OPEN COVER.
+- **관찰 가능한 증거:** The cover's RAM module, one row per 32-bit word, with the target word highlighted and a store to any other address appearing as its own row. DATASHEET separates the target word from the platform's full RAM region, `0x00000000–0x7FFFFFFF`.
+- **시험할 가설:** The RAM is broken / the value was transmitted rather than stored / the destination address is a device register instead of RAM.
+- **수정할 대상:** Only the destination address in `li t0, [0xD4110000]`. The build produces a different value on every flash, so there is no number to match. The supplied program supports four-byte-aligned RAM addresses and the UART1 DATA address; Boot ROM and other device writes are rejected before installing.
+- **성공 판정:** This run's store lands on `0x00002000`, while transmitting nothing. Editing without flashing changes nothing observable. A store to any other valid RAM address leaves the target word empty, so an earlier correct value cannot carry a later wrong program.
+- **다음 문제와의 연결:** Reading memory directly supports every later diagnosis, and the cover becomes the shared hardware observation surface for Episode 03.
 
 ### Episode 03 — Wrong Clock
 
 - **증상:** UART and RAM pass, but serial ticks and the timer LED pulse every two seconds instead of one.
-- **실제 원인:** The supplied diagnostic waits for 10,000,000 counter ticks while its selected source is only 5 MHz.
-- **관찰 가능한 증거:** TIMER at `0xA2180000`, applied counter rate, fixed target ticks, configured delay, and elapsed browser time measured between serial ticks. DATASHEET gives the clock-to-delay relationship.
+- **실제 원인:** The supplied diagnostic assumes a 2 GHz timebase and requests 2,000,000,000 ticks for one second, while ACLINT's hardware timer runs at a fixed 1 GHz.
+- **관찰 가능한 증거:** The cover's RAM module shows the live MTIME counter as a row at `0xA2180000`, because the timer is a memory-mapped register rather than a module of its own. The CPU module shows the program counter and the register the program is comparing against. DATASHEET specifies one billion ticks per second. The assumed timebase stays on the PC. MTIME keeps counting across a firmware reset while the wait measurement restarts.
 - **시험할 가설:** The diagnostic logic is wrong / the counter runs at an unexpected rate.
-- **수정할 대상:** Clock source: 5, 10, or 20 MHz. Build & Flash applies the selected source and restarts the diagnostic; the target remains 10,000,000 ticks.
-- **성공 판정:** After applying 10 MHz, at least two live ticks establish an observed interval within 200 ms of one second. TIMER PASS completes BASIC DIAGNOSTICS COMPLETE with UART and RAM already passing.
+- **수정할 대상:** PROGRAM TIMEBASE: 500 MHz, 1 GHz, or 2 GHz. The supplied diagnostic calculates its one-second target from that setting. Build & Flash installs it and restarts the diagnostic; the hardware frequency stays fixed.
+- **성공 판정:** After applying the correct 1 GHz program timebase, at least two live ticks establish an observed interval within 200 ms of one second. TIMER PASS completes BASIC DIAGNOSTICS COMPLETE with UART and RAM already passing.
 - **다음 문제와의 연결:** Reliable timing is the basis for input handling and animation later. Display bring-up is next; the Pocket screen remains black in this episode.
 
 ---

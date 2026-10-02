@@ -10,10 +10,10 @@ export const chapter01: Chapter<UartMissionState> = {
     initialObservation: "Your parents' Pocket powers on. Their last boot.S is still open on the development PC. A character arrives over the UART cable: B. The expected output is A.",
     successMessage: "UART PASS — A received.",
   },
-  next: { id: 2, title: "False Memory Failure" },
+  next: { id: 2, title: "Wrong Destination" },
   workbench: { objects: ["pocket", "computer", "datasheet", "book", "uart-cable"] },
   computer: {
-    panels: ["editor", "terminal", "target"],
+    panels: ["editor", "terminal"],
     editorHint: "Only the highlighted byte can be changed.",
     datasheetSection: "uart",
     source: {

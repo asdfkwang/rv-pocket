@@ -2,11 +2,11 @@ import { viewLabel, chapters, createAppState, currentChapter, missionComplete, n
 import { getLang, t, toggleLang } from "./i18n";
 import { chapterMission, chapterTitle } from "./chapters/locale";
 import { renderStation } from "./views/station";
-import { renderPc, renderInspector, sourceStatus, stationSerialSummary } from "./views/pc";
+import { renderPc, sourceStatus, stationSerialSummary } from "./views/pc";
 import { renderPocket } from "./views/pocket";
 import { flashFirmware, formatByte, parseByte, rebootTarget, serialDisplay } from "./sim/uart";
-import { flashMemoryFirmware, formatAddress, readMemoryRange, rebootMemoryTarget, runMemoryTest } from "./sim/memory";
-import { flashTimerFirmware, formatInterval, parseClock, rebootTimerTarget, recordTimerTick, timerIntervalMs } from "./sim/timer";
+import { flashMemoryFirmware, formatAddress, formatWord, readStoreAddress, rebootMemoryTarget, WATCHED_RAM_ADDRESS } from "./sim/memory";
+import { flashTimerFirmware, formatFrequency, formatInterval, mtimeCounter, parseTimebase, rebootTimerTarget, recordTimerTick, timerIntervalMs, timerTargetTicks } from "./sim/timer";
 import { renderMissionStatus, renderSuccess } from "./views/mission";
 import { renderDatasheet } from "./views/datasheet";
 import { DATASHEET_SECTIONS } from "./datasheet-content";
@@ -32,6 +32,7 @@ let txTimer: number | undefined;
 let timerTimeout: number | undefined;
 let timerLedTimeout: number | undefined;
 let timerAttempt = 0;
+let mtimeTicker: number | undefined;
 
 function canonicalizeRoute() {
   const hash = routeHash({ chapterId: state.active.id, view: state.view });
@@ -83,9 +84,32 @@ function render() {
   }
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
   if (!state.ui.introDismissed) document.getElementById("got-it")?.focus();
+  syncMtimeTicker();
 }
 
 function announce(message: string) { announcement.textContent = message; }
+
+// MTIME is a live counter. Patch only its text so ticks never redraw the page and
+// the reader's position in BOOK, DATASHEET, or the editor survives.
+function syncMtimeTicker() {
+  const wanted = state.ui.coverOpen && state.ui.coverModule === "ram"
+    && state.active.id === 3 && state.view === "station";
+  if (wanted && mtimeTicker === undefined) {
+    mtimeTicker = window.setInterval(() => {
+      if (state.active.id !== 3) return;
+      const counter = document.getElementById("mtime-counter");
+      if (counter) counter.textContent = formatWord(mtimeCounter(state.active.machine, performance.now()));
+    }, 100);
+  } else if (!wanted && mtimeTicker !== undefined) {
+    window.clearInterval(mtimeTicker);
+    mtimeTicker = undefined;
+  }
+}
+
+function stopMtimeTicker() {
+  window.clearInterval(mtimeTicker);
+  mtimeTicker = undefined;
+}
 
 function refreshLights() {
   document.querySelectorAll(".uart-tx-light").forEach((light) => light.classList.toggle("tx-pulse", state.ui.txActive));
@@ -127,7 +151,10 @@ function stopTimer() {
 }
 
 function startTimer() {
-  if (state.active.id !== 3 || !state.ui.introDismissed || state.ui.buildPhase !== "idle" || timerTimeout !== undefined) return;
+  if (state.active.id !== 3) return;
+  // The hardware counter never restarts; only the program's wait does.
+  if (state.active.machine.counterStartedAt === null) state.active.machine.counterStartedAt = performance.now();
+  if (!state.ui.introDismissed || state.ui.buildPhase !== "idle" || timerTimeout !== undefined) return;
   const attempt = timerAttempt;
   timerTimeout = window.setTimeout(() => {
     if (attempt !== timerAttempt || state.active.id !== 3 || state.ui.buildPhase !== "idle") return;
@@ -146,7 +173,7 @@ function startTimer() {
       refreshLights();
     }, 180);
     startTimer();
-  }, timerIntervalMs(state.active.machine.clockMhz));
+  }, timerIntervalMs(state.active.machine.timebaseHz));
 }
 
 function pulseTx() {
@@ -167,15 +194,15 @@ async function buildAndFlash() {
   const fileName = currentChapter(state).computer.source!.fileName;
   const binaryName = fileName.replace(/\.S$/, ".bin");
   const byte = parseByte(state.ui.draftByte);
-  const memory = readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd);
-  const clock = parseClock(state.ui.draftClock);
+  const store = readStoreAddress(state.ui.draftStoreAddress);
+  const timebase = parseTimebase(state.ui.draftTimebase);
   const error = chapterId === 1 && byte === null ? "Enter one hex byte from 0x00 to 0xFF."
-    : chapterId === 2 ? memory.error
-    : chapterId === 3 && clock === null ? "Choose a supported clock source." : "";
+    : chapterId === 2 ? store.error
+    : chapterId === 3 && timebase === null ? "Choose a supported program timebase." : "";
   if (error) {
     state.ui.feedback = `Build stopped. ${error} The running firmware is unchanged.`;
     render();
-    document.getElementById(chapterId === 1 ? "byte-value" : chapterId === 2 ? "range-start" : "clock-source")?.focus();
+    document.getElementById(chapterId === 1 ? "byte-value" : chapterId === 2 ? "store-address" : "timebase-frequency")?.focus();
     announce(state.ui.feedback);
     return;
   }
@@ -206,20 +233,27 @@ async function buildAndFlash() {
     state.ui.feedback = missionComplete(state) ? "The Pocket sent A. UART PASS. The display can wait for its own repair."
       : `The Pocket sent ${received}. Expected A. Check the byte in boot.S and the ASCII table in DATASHEET.`;
   } else if (state.active.id === 2) {
-    state.active.machine = flashMemoryFirmware(state.active.machine, memory.range!);
-    state.ui.draftRangeStart = formatAddress(memory.range!.start);
-    state.ui.draftRangeEnd = formatAddress(memory.range!.end);
-    state.ui.feedback = state.active.machine.passed ? `Installed range passes: ${state.active.machine.bytesChecked} bytes checked, 0 errors. RAM PASS.`
-      : "The installed test still overlaps MEMTEST WORKAREA. Compare the failed addresses with the memory map.";
+    state.active.machine = rebootMemoryTarget(flashMemoryFirmware(state.active.machine, store.address!));
+    state.ui.draftStoreAddress = formatAddress(store.address!);
+    state.ui.feedback = missionComplete(state)
+      ? `RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} and nothing was transmitted. Watch the value under OPEN COVER.`
+      : `The store went to ${formatAddress(store.address!)}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is still empty. Compare the destination with the Memory Map in DATASHEET.`;
   } else {
-    state.active.machine = flashTimerFirmware(state.active.machine, clock!);
-    state.ui.feedback = `Clock source installed: ${clock} MHz. Observe two ticks to measure the new interval.`;
+    state.active.machine = rebootTimerTarget(flashTimerFirmware(state.active.machine, timebase!));
+    state.ui.feedback = `Program timebase installed: ${formatFrequency(timebase!)}. The program now waits ${timerTargetTicks(timebase!).toLocaleString("en-US")} ticks. Observe two ticks; the hardware timer stays at 1 GHz.`;
   }
   state.ui.buildPhase = "idle";
   state.ui.buildLog.push("✓ Pocket booted");
   if (state.active.id === 3) { render(); startTimer(); }
+  else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
   announce(state.ui.feedback);
+}
+
+function sentOnThisRun(): boolean {
+  return state.active.id === 2
+    ? state.active.machine.lastUartTx?.execution === state.active.machine.executionCount
+    : true;
 }
 
 function resetTarget() {
@@ -229,34 +263,18 @@ function resetTarget() {
     state.ui.feedback = `Pocket reset. Received ${serialDisplay(state.active.machine.terminalOutput)} from the installed firmware.`;
   } else if (state.active.id === 2) {
     state.active.machine = rebootMemoryTarget(state.active.machine);
-    state.ui.feedback = "Pocket reset. The RAM diagnostic ran using the installed test range.";
+    const store = state.active.machine.lastStore;
+    state.ui.feedback = missionComplete(state)
+      ? `Pocket reset. RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} again, and nothing was transmitted.`
+      : `Pocket reset. The installed program stored to ${store ? formatAddress(store.address) : "an unknown address"}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is unchanged.`;
   } else {
     stopTimer();
     state.active.machine = rebootTimerTarget(state.active.machine);
-    state.ui.feedback = `Pocket reset. The timer still uses the installed ${state.active.machine.clockMhz} MHz clock source.`;
+    state.ui.feedback = `Pocket reset. The diagnostic uses the installed ${formatFrequency(state.active.machine.timebaseHz)} program timebase; the hardware timer runs at 1 GHz.`;
   }
   if (state.active.id === 3) { render(); startTimer(); }
+  else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
-  announce(state.ui.feedback);
-}
-
-function runMemoryDiagnostic() {
-  if (state.active.id !== 2 || state.ui.buildPhase !== "idle") return;
-  const { range, error } = readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd);
-  if (!range) {
-    state.ui.feedback = `Diagnostic stopped. ${error}`;
-    render();
-    document.getElementById("range-start")?.focus();
-    announce(state.ui.feedback);
-    return;
-  }
-  state.active.machine = runMemoryTest(state.active.machine, range);
-  state.ui.draftRangeStart = formatAddress(range.start);
-  state.ui.draftRangeEnd = formatAddress(range.end);
-  state.ui.feedback = state.active.machine.passed
-    ? `RAM PASS. ${state.active.machine.bytesChecked} bytes checked, 0 errors. Build & Flash keeps this range for the next reset.`
-    : "The failed addresses moved, but they remain inside MEMTEST WORKAREA. Compare the range with the reserved memory.";
-  pulseTx();
   announce(state.ui.feedback);
 }
 
@@ -325,9 +343,21 @@ app.addEventListener("click", (event) => {
     case "build-flash":
       void buildAndFlash();
       return;
-    case "run-memory":
-      runMemoryDiagnostic();
+    case "toggle-cover": {
+      // Opening or closing the cover must not interrupt a running diagnostic.
+      state.ui.coverOpen = !state.ui.coverOpen;
+      render();
+      announce(state.ui.coverOpen ? "Cover open. The hardware modules are on the station." : "Cover closed.");
       return;
+    }
+    case "cover-module": {
+      const module = button.dataset.module;
+      if (module !== "cpu" && module !== "ram") return;
+      state.ui.coverModule = module;
+      render();
+      announce(`${module.toUpperCase()} module.`);
+      return;
+    }
     case "next-episode": {
       const next = Number(button.dataset.episode);
       if (next === 2 || next === 3) goTo(next, "station");
@@ -437,8 +467,12 @@ app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
     if (["0", "1", "2", "3"].includes(target.value)) goTo(Number(target.value) as ChapterId, state.view);
-  } else if (target instanceof HTMLSelectElement && target.id === "clock-source" && state.active.id === 3 && state.ui.buildPhase === "idle") {
-    if (parseClock(target.value) !== null) state.ui.draftClock = target.value;
+  } else if (target instanceof HTMLSelectElement && target.id === "timebase-frequency" && state.active.id === 3 && state.ui.buildPhase === "idle") {
+    const timebase = parseTimebase(target.value);
+    if (timebase === null) return;
+    state.ui.draftTimebase = target.value;
+    const preview = document.getElementById("source-preview-target-ticks");
+    if (preview) preview.textContent = String(timerTargetTicks(timebase));
     const status = document.getElementById("source-status");
     if (status) status.textContent = sourceStatus(state);
   } else if (target instanceof HTMLInputElement && target.dataset.checkChoice) {
@@ -464,16 +498,11 @@ app.addEventListener("input", (event) => {
     if (status) status.textContent = sourceStatus(state);
     return;
   }
-  if (target instanceof HTMLInputElement && (target.id === "range-start" || target.id === "range-end") && state.active.id === 2 && state.ui.buildPhase === "idle") {
-    if (target.id === "range-start") state.ui.draftRangeStart = target.value;
-    else state.ui.draftRangeEnd = target.value;
-    target.setAttribute("aria-invalid", String(readMemoryRange(state.ui.draftRangeStart, state.ui.draftRangeEnd).range === null));
-    const preview = document.getElementById(`source-preview-${target.id}`);
-    if (preview) preview.textContent = target.value;
+  if (target instanceof HTMLInputElement && target.id === "store-address" && state.active.id === 2 && state.ui.buildPhase === "idle") {
+    state.ui.draftStoreAddress = target.value;
+    target.setAttribute("aria-invalid", String(readStoreAddress(target.value).address === null));
     const status = document.getElementById("source-status");
     if (status) status.textContent = sourceStatus(state);
-    const inspector = document.getElementById("episode-inspector");
-    if (inspector) inspector.innerHTML = renderInspector(state);
     return;
   }
   if (target instanceof HTMLInputElement && target.id === "ebook-search") {
@@ -493,6 +522,6 @@ document.querySelector<HTMLAnchorElement>(".skip-link")?.addEventListener("click
 
 canonicalizeRoute();
 render();
-window.addEventListener("pagehide", stopTimer);
+window.addEventListener("pagehide", () => { stopTimer(); stopMtimeTicker(); });
 window.addEventListener("pageshow", startTimer);
 if (routeNotice) announce(routeNotice);

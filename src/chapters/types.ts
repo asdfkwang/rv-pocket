@@ -1,11 +1,15 @@
 export type WorkbenchObjectId = "pocket" | "computer" | "datasheet" | "book" | "uart-cable";
 import type { DatasheetSectionId } from "../datasheet-content";
 
-export type ComputerPanelId = "editor" | "terminal" | "memory-map" | "timer" | "target";
+export type ComputerPanelId = "editor" | "terminal";
+
+// The hardware blocks the Pocket's cover can show. UART output is not one of them:
+// the PC's serial terminal already shows it, the way Episode 01 does.
+export type ModuleId = "cpu" | "ram";
 
 export interface GuidedSource {
   fileName: string;
-  lines: readonly { before: string; field?: "byte" | "range-start" | "range-end"; after?: string }[];
+  lines: readonly { before: string; field?: "byte" | "store-address" | "target-ticks"; after?: string }[];
 }
 
 export interface ManualSection {
@@ -32,6 +36,7 @@ export interface Chapter<State> {
     successMessage: string;
   };
   next?: { id?: number; title: string };
+  cover?: { modules: readonly ModuleId[]; selected: ModuleId };
   workbench: { objects: readonly WorkbenchObjectId[] };
   computer: { panels: readonly ComputerPanelId[]; source?: GuidedSource; editorHint?: string; datasheetSection?: DatasheetSectionId };
   manual: readonly ManualSection[];
