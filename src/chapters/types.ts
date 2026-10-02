@@ -5,20 +5,36 @@ export type ComputerPanelId = "editor" | "terminal";
 
 // The hardware blocks the Pocket's cover can show. UART output is not one of them:
 // the PC's serial terminal already shows it, the way Episode 01 does.
-export type ModuleId = "cpu" | "ram";
+export type ModuleId = "cpu" | "ram" | "display";
 
 export interface GuidedSource {
   fileName: string;
-  lines: readonly { before: string; field?: "byte" | "store-address" | "target-ticks"; after?: string }[];
+  lines: readonly { before: string; field?: "byte" | "store-address" | "target-ticks" | "row-bytes"; after?: string }[];
 }
 
 // A program is assembled from blocks rather than typed. The skeleton is fixed and the
 // player chooses the order, so the repair is the order without a C parser.
 export interface GuidedProgram {
   fileName: string;
-  skeleton: readonly string[];
-  blocks: readonly { id: string; lines: readonly string[] }[];
+  singleLocation?: boolean;
+  skeleton: readonly (string | { slot: string })[];
+  slots: readonly { id: string; label: string; indent: string; blocks: readonly string[] }[];
+  blocks: readonly { id: string; label?: string; lines: readonly string[] }[];
   solution: readonly string[];
+}
+
+export type ProgramPlacement = Record<string, readonly string[]>;
+
+export function editProgramBlock(program: GuidedProgram, placement: ProgramPlacement, slotId: string, blockId: string, add: boolean): ProgramPlacement {
+  const slot = program.slots.find((candidate) => candidate.id === slotId);
+  if (!slot?.blocks.includes(blockId)) return placement;
+  const next = { ...placement };
+  if (add && program.singleLocation) {
+    for (const key of Object.keys(next)) next[key] = (next[key] ?? []).filter((id) => id !== blockId);
+  }
+  const chosen = next[slotId] ?? [];
+  next[slotId] = add ? chosen.includes(blockId) ? chosen : [...chosen, blockId] : chosen.filter((id) => id !== blockId);
+  return next;
 }
 
 export interface ManualSection {

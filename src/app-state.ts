@@ -5,20 +5,26 @@ import { chapter02 } from "./chapters/chapter-02";
 import { chapter03 } from "./chapters/chapter-03";
 import { chapter04 } from "./chapters/chapter-04";
 import { chapter05 } from "./chapters/chapter-05";
+import { chapter06 } from "./chapters/chapter-06";
+import { chapter07 } from "./chapters/chapter-07";
+import { chapter08 } from "./chapters/chapter-08";
+import { createInitialMovingState, isMovingMissionComplete, type MovingMissionState } from "./sim/moving";
+import { createInitialFramebufferState, isFramebufferMissionComplete, type FramebufferMissionState, type RowBytes } from "./sim/framebuffer";
+import { createInitialDisplayState, isDisplayMissionComplete, type DisplayMissionState } from "./sim/display";
 import { formatByte, INITIAL_BYTE, type UartMissionState } from "./sim/uart";
 import { formatAddress, INITIAL_STORE_ADDRESS, type MemoryMissionState } from "./sim/memory";
 import { INITIAL_TIMEBASE_HZ, type TimerMissionState } from "./sim/timer";
 import { createInitialInputState, isInputMissionComplete, type InputMissionState } from "./sim/input";
-import { createInitialLoopState, isLoopMissionComplete, type LoopMissionState } from "./sim/loop";
+import { createInitialInterruptState, isInterruptMissionComplete, type InterruptMissionState } from "./sim/interrupt";
 import type { DatasheetSectionId } from "./datasheet-content";
-import type { ModuleId } from "./chapters/types";
+import type { ModuleId, ProgramPlacement } from "./chapters/types";
 
 export type View = "station" | "pc" | "pocket" | "datasheet" | "book";
 
 export function viewLabel(view: View): string {
   return { station: "STATION", pc: "PC", pocket: "RV POCKET", datasheet: "DATASHEET", book: "BOOK" }[view];
 }
-export type ChapterId = 0 | 1 | 2 | 3 | 4 | 5;
+export type ChapterId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export interface Route { chapterId: ChapterId; view: View }
 export type ActiveMission =
   | { id: 0; machine: OnboardingState }
@@ -26,7 +32,10 @@ export type ActiveMission =
   | { id: 2; machine: MemoryMissionState }
   | { id: 3; machine: TimerMissionState }
   | { id: 4; machine: InputMissionState }
-  | { id: 5; machine: LoopMissionState };
+  | { id: 5; machine: InterruptMissionState }
+  | { id: 6; machine: DisplayMissionState }
+  | { id: 7; machine: FramebufferMissionState }
+  | { id: 8; machine: MovingMissionState };
 export interface UiState {
   quizAnswers: Record<string, string>;
   feedback: string;
@@ -35,7 +44,10 @@ export interface UiState {
   draftByte: string;
   draftStoreAddress: string;
   draftTimebase: string;
-  draftBlocks: readonly string[];
+  draftBlocks: ProgramPlacement;
+  draftInterrupts: boolean;
+  draftRowBytes: RowBytes;
+  irqReplayElapsedMs: number;
   buildPhase: "idle" | "building" | "flashing" | "booting";
   buildLog: string[];
   txActive: boolean;
@@ -52,7 +64,7 @@ export interface AppState {
   ui: UiState;
 }
 
-export const chapters = [chapter00, chapter01, chapter02, chapter03, chapter04, chapter05] as const;
+export const chapters = [chapter00, chapter01, chapter02, chapter03, chapter04, chapter05, chapter06, chapter07, chapter08] as const;
 export const views: readonly View[] = ["station", "pc", "pocket", "datasheet", "book"];
 
 export function createAppState(route: Route): AppState {
@@ -61,7 +73,10 @@ export function createAppState(route: Route): AppState {
     : route.chapterId === 2 ? { id: 2, machine: chapter02.createInitialState() }
     : route.chapterId === 3 ? { id: 3, machine: chapter03.createInitialState() }
     : route.chapterId === 4 ? { id: 4, machine: createInitialInputState() }
-    : { id: 5, machine: createInitialLoopState() };
+    : route.chapterId === 5 ? { id: 5, machine: createInitialInterruptState() }
+    : route.chapterId === 6 ? { id: 6, machine: createInitialDisplayState() }
+    : route.chapterId === 7 ? { id: 7, machine: createInitialFramebufferState() }
+    : { id: 8, machine: createInitialMovingState() };
   return {
     active,
     view: route.view,
@@ -70,12 +85,21 @@ export function createAppState(route: Route): AppState {
       draftByte: formatByte(INITIAL_BYTE), buildPhase: "idle", buildLog: [], txActive: false,
       draftStoreAddress: formatAddress(INITIAL_STORE_ADDRESS), draftTimebase: String(INITIAL_TIMEBASE_HZ),
       // The editor opens on what is actually installed, so the player adds to it.
-      draftBlocks: active.id === 4 || active.id === 5 ? [...active.machine.installedBlocks] : [],
+      draftBlocks: active.id === 4 ? { body: [...active.machine.installedBlocks] }
+        : active.id === 6 ? { setup: [...active.machine.installedBlocks] }
+        : active.id === 8 ? { handler: [...active.machine.installedProgram.handler], "main-input": [...active.machine.installedProgram.mainInput] } : {},
+      draftInterrupts: false, irqReplayElapsedMs: 0,
+      draftRowBytes: 32,
       timerLedActive: false, coverOpen: false, buttonHeld: false,
       coverModule: chapters[route.chapterId].cover?.selected ?? "ram",
       datasheetSection: chapters[route.chapterId].computer.datasheetSection ?? "memory-map",
     },
   };
+}
+
+export function switchToInterruptDraft(state: AppState): AppState {
+  if (state.active.id !== 5 || state.ui.draftInterrupts) return state;
+  return { ...state, ui: { ...state.ui, draftInterrupts: true, draftBlocks: { setup: [], wait: [], handler: [] } } };
 }
 
 export function navigate(state: AppState, route: Route): AppState {
@@ -99,14 +123,17 @@ export function missionComplete(state: AppState): boolean {
     case 2: return chapter02.successCondition(state.active.machine);
     case 3: return chapter03.successCondition(state.active.machine);
     case 4: return isInputMissionComplete(state.active.machine);
-    case 5: return isLoopMissionComplete(state.active.machine);
+    case 5: return isInterruptMissionComplete(state.active.machine);
+    case 6: return isDisplayMissionComplete(state.active.machine);
+    case 7: return isFramebufferMissionComplete(state.active.machine);
+    case 8: return isMovingMissionComplete(state.active.machine);
   }
 }
 
 export function parseRoute(hash: string): { route: Route; notice: string } {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const rawChapter = params.get("episode") ?? params.get("chapter");
-  const validChapter = rawChapter === null || ["0", "00", "1", "01", "2", "02", "3", "03", "4", "04", "5", "05"].includes(rawChapter);
+  const validChapter = rawChapter === null || chapters.some((chapter) => rawChapter === String(chapter.id) || rawChapter === String(chapter.id).padStart(2, "0"));
   const chapterId = (validChapter ? Number(rawChapter ?? 0) : 0) as ChapterId;
   const rawView = params.get("view");
   const mappedView = rawView === "workbench" ? "station"

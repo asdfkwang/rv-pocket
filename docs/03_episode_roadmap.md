@@ -80,45 +80,42 @@ Input comes before display. The buttons and LEDs exist while the screen is still
 - **성공 판정:** Hold the A button and the LED turns on; let go and it turns off. The repair is judged on a real press and release, so configuring the program without touching the device does not finish it.
 - **다음 문제와의 연결:** This is the first complete input → CPU → output program. The player has seen an MMIO read, an MMIO write, a bit test, and a polling loop, which is what Episode 05 takes apart.
 
-### Episode 05 — The Busy Loop
+### Episode 05 — Stop Asking
 
-- **증상:** Episode 04's program still works, and the LED still follows the button. But the program never gets to do anything else: the only thing that ever runs is the button check. A second job added below the loop body never executes.
-- **실제 원인:** Polling owns the CPU. The program re-reads the button thousands of times per second and every one of those passes is a decision to do nothing, so no other work is ever reached.
-- **관찰 가능한 증거:** A loop-pass counter in the cover's CPU module climbs continuously, and a read count on the button register climbs with it. The counter does not stop between presses, which is the point: the reads were never caused by input.
-- **시험할 가설:** The program crashed / the second job is placed outside the loop / the loop is spinning with nothing to do.
-- **수정할 대상:** How often the program checks the button. The supplied loop re-reads it every pass. The repair is to let the loop wait for a change before doing the work again.
-- **성공 판정:** Both the button check and the second job run, the LED still follows a press, and the loop-pass counter stops climbing while the button is held down. Polling is not removed — it is the *unconditional* spin that is the defect, so the fix is a wait for change rather than a delete of the read.
-- **다음 문제와의 연결:** Deciding when to run work instead of running it always is the same question an interrupt answers in hardware. State-vs-change thinking returns here and in Episode 08.
+- **증상:** Episode 04's button-to-LED program works, but BUTTON READS keeps climbing while the player touches nothing. IRQ COUNT is zero and CPU STATE is RUNNING.
+- **실제 원인:** Polling makes the CPU repeatedly read the same MMIO address even when no input changes.
+- **관찰 가능한 증거:** The CPU module shows live BUTTON READS, IRQ COUNT, CPU STATE, and LED. After the repair, idle is WAITING with no reads; each press or release adds one IRQ and one read. The RAM module retains the button and LED registers.
+- **시험할 가설:** The button program failed / the CPU needs to keep asking / the button can request service when its state changes.
+- **수정할 대상:** PC starts with the inherited polling source. SWITCH TO INTERRUPTS opens draft SETUP, WAIT, and HANDLER slots without replacing installed firmware. Enable IRQs in setup, wait in main, and assemble READ → UPDATE → ACK in the handler. Missing blocks may be flashed to observe failures; missing ACK leaves a pending source that repeatedly runs the handler.
+- **성공 판정:** Install the five blocks in their intended slots and service order, observe a real press turning the LED on and a release turning it off, then verify one second of WAITING without further reads or pending IRQs. Opening the cover or book is optional.
+- **다음 문제와의 연결:** Polling cost now motivates interrupt, handler, CPU wait/wakeup, and acknowledgement. Supplied runtime handles routing, context preservation, CSR setup, and trap entry/return. APLIC → IMSIC → CPU internals remain deferred; Episode 08 reuses notification while other work continues.
 
-### Episode 06 — Black Screen First
+### Episode 06 — First Light
 
-- **증상:** Only a black screen; nothing was ever initialized.
-- **실제 원인:** The display initialization order is wrong.
-- **관찰 가능한 증거:** Init sequence log; registers never enabled.
-- **시험할 가설:** The screen hardware is dead / init steps run in the wrong order.
-- **수정할 대상:** The initialization sequence.
-- **성공 판정:** The display initializes and shows output.
-- **다음 문제와의 연결:** A live screen makes position and movement problems visible.
+- **Symptom:** A lights the LED, but the screen stays black.
+- **Cause:** Startup settings are sent before the display becomes ready.
+- **Evidence:** DISPLAY power, readiness, mode, output, and actual startup results under OPEN COVER; LIVE POCKET beside the PC editor.
+- **Repair:** Arrange POWER ON → WAIT READY → SELECT TEST MODE → ENABLE DISPLAY. The device becomes ready 500 ms after power-on. Premature settings are ignored; waiting before power stalls startup. Incomplete and reordered drafts can be installed.
+- **Success:** The installed program produces the visible test pattern. Opening references is optional.
+- **Next:** A framebuffer program turns coordinates into visible pixels.
 
-### Episode 07 — Off the Screen
+### Episode 07 — Wrong Place
 
-- **증상:** A marker or status block renders outside the visible screen.
-- **실제 원인:** A coordinate/address calculation error.
-- **관찰 가능한 증거:** Computed coordinates vs. screen bounds; single-stepped calculation.
-- **시험할 가설:** The display is misconfigured / the address math is wrong.
-- **수정할 대상:** The calculation.
-- **성공 판정:** The marker appears where intended.
-- **다음 문제와의 연결:** Correct addressing is reused for sprites, buffers, and DMA targets.
+- **Symptom:** The marker is misplaced or absent at the requested coordinate.
+- **Cause:** The program uses 32 bytes between rows; the display scans 16.
+- **Evidence:** Requested outline versus actual pixel on the PC grid; row offset, byte offset, write address, and the 128-byte framebuffer under OPEN COVER. Off-screen writes still appear in RAM.
+- **Repair:** Choose ROW_BYTES from 8 / 16 / 32 and flash. The 16×8 monochrome display uses one byte per pixel at 0x00003000–0x0000307F. Click coordinates or use the D-pad to execute the installed calculation immediately.
+- **Success:** With stride 16 installed, verify the center (8,4) and all four corners in any order.
+- **Next:** Input and animation must share the CPU without a long handler freezing frame updates.
 
-### Episode 08 — Frozen While Waiting
+### Episode 08 — Keep Moving
 
-- **증상:** While waiting for input, the screen and diagnostics stop.
-- **실제 원인:** A blocking wait holds the whole loop.
-- **관찰 가능한 증거:** Frozen frame counter during waits; input arrives but nothing updates.
-- **시험할 가설:** The screen task crashed / the wait never yields.
-- **수정할 대상:** The wait: switch to an event-processing flow.
-- **성공 판정:** The screen stays alive while waiting for input.
-- **다음 문제와의 연결:** Event flow is the foundation for interrupt-driven input and async waits.
+- **Symptom:** The automatic dot and D-pad marker stop updating while A is held, then resume after release.
+- **Cause:** WAIT FOR RELEASE keeps the CPU inside the input handler. The hardware display retains its last frame, but main cannot service pending frame events.
+- **Evidence:** FRAME, CPU AT, CURRENT STEP, pending timer/IRQ, and recent execution history under CPU. LIVE POCKET makes the freeze and recovery visible.
+- **Repair:** Remove WAIT FOR RELEASE; assemble READ → RECORD INPUT EVENT → ACK in the handler; move APPLY INPUT to main's input-event slot. Each block has one location. The supplied runtime safely queues events and waits with event_wait().
+- **Success:** Install the intended placement, hold A for at least one second while 10 Hz frame updates continue, and handle a D-pad input in main. A-down reverses direction once; release does not reverse it. Reading references remains optional.
+- **Next:** The finished device demo supports direct input and continuous animation. Later episodes investigate CPU work, buffers, and DMA.
 
 ---
 

@@ -53,7 +53,10 @@ describe("episode navigation", () => {
     }
     expect(parseRoute("#episode=04&view=station").route).toEqual({ chapterId: 4, view: "station" });
     expect(parseRoute("#episode=05&view=station").route).toEqual({ chapterId: 5, view: "station" });
-    const unavailable = parseRoute("#episode=06&view=pc");
+    expect(parseRoute("#episode=06&view=pc").route.chapterId).toBe(6);
+    expect(parseRoute("#episode=07&view=pc").route.chapterId).toBe(7);
+    expect(parseRoute("#episode=08&view=pc").route.chapterId).toBe(8);
+    const unavailable = parseRoute("#episode=09&view=pc");
     expect(unavailable.route).toEqual({ chapterId: 0, view: "pc" });
     expect(unavailable.notice).not.toBe("");
   });

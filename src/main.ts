@@ -1,4 +1,4 @@
-import { viewLabel, chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, views, type ChapterId, type View } from "./app-state";
+import { viewLabel, chapters, createAppState, currentChapter, missionComplete, navigate, parseRoute, resetMission, routeHash, switchToInterruptDraft, views, type ChapterId, type View } from "./app-state";
 import { getLang, t, toggleLang } from "./i18n";
 import { chapterMission, chapterTitle } from "./chapters/locale";
 import { renderStation } from "./views/station";
@@ -8,12 +8,20 @@ import { flashFirmware, formatByte, parseByte, rebootTarget, serialDisplay } fro
 import { flashMemoryFirmware, formatAddress, formatWord, readStoreAddress, rebootMemoryTarget, WATCHED_RAM_ADDRESS } from "./sim/memory";
 import { flashTimerFirmware, formatFrequency, formatInterval, mtimeCounter, parseTimebase, rebootTimerTarget, recordTimerTick, timerIntervalMs, timerTargetTicks } from "./sim/timer";
 import { flashInputProgram, pollInput } from "./sim/input";
-import { flashLoopProgram, LOOP_PASSES_PER_SECOND, pollLoop, tickLoop } from "./sim/loop";
+import { flashInterruptProgram, INTERRUPT_TICK_MS, interruptProgramFromDraft, rebootInterruptTarget, setInterruptButton, tickInterrupt } from "./sim/interrupt";
+import { interruptCpuNote, irqReplayStep, renderIrqReplay } from "./views/inspection";
 import { renderMissionStatus, renderSuccess } from "./views/mission";
 import { renderDatasheet } from "./views/datasheet";
 import { DATASHEET_SECTIONS } from "./datasheet-content";
 import { confirmCheck, getBookmarks, getCheckSelection, getCurrentCheck, getCheckTotal, getEbookSlug, getEbookTitle, harderPrompt, isCheckCorrect, openEbookChapter, renderBook, renderEbookToc, setEbookQuery, stepCheck, toggleCheckChoice } from "./views/book";
 import { escapeHtml as e } from "./views/html";
+
+import { flashMovingProgram, movingProgramFromDraft, moveMovingMarker, rebootMovingTarget, setMovingButton, tickMoving } from "./sim/moving";
+import { editProgramBlock } from "./chapters/types";
+import { flashFramebufferProgram, moveFramebufferMarker, rebootFramebufferTarget, ROW_BYTES_CHOICES, setFramebufferPosition, type RowBytes } from "./sim/framebuffer";
+import { renderFramebufferRam } from "./views/inspection";
+import { flashDisplayProgram, rebootDisplayTarget, setDisplayButton, tickDisplay } from "./sim/display";
+import { displayStatus, renderDisplayReadout, renderDisplayScreen } from "./views/display";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.querySelector<HTMLParagraphElement>("#announcement")!;
@@ -35,9 +43,10 @@ let timerTimeout: number | undefined;
 let timerLedTimeout: number | undefined;
 let timerAttempt = 0;
 let mtimeTicker: number | undefined;
-let loopTicker: number | undefined;
-const LOOP_TICK_MS = 100;
-const LOOP_TICK_PASSES = LOOP_PASSES_PER_SECOND * LOOP_TICK_MS / 1000;
+let interruptTicker: number | undefined;
+let displayTicker: number | undefined;
+let activeButtonPointer: number | undefined;
+let activeButtonKey: string | undefined;
 
 function canonicalizeRoute() {
   const hash = routeHash({ chapterId: state.active.id, view: state.view });
@@ -90,7 +99,8 @@ function render() {
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
   if (!state.ui.introDismissed) document.getElementById("got-it")?.focus();
   syncMtimeTicker();
-  syncLoopTicker();
+  syncInterruptTicker();
+  syncDisplayTicker();
 }
 
 function announce(message: string) { announcement.textContent = message; }
@@ -117,73 +127,154 @@ function stopMtimeTicker() {
   mtimeTicker = undefined;
 }
 
-// Episode 05's loop turns on its own, whether or not anyone touches the machine. The
-// tick advances the counters and patches their text; it never redraws the page, so the
-// cover, the editor, and the BOOK's reading state are all left alone.
-function syncLoopTicker() {
-  const wanted = state.active.id === 5 && !state.ui.introDismissed;
-  if (wanted && loopTicker === undefined) {
-    loopTicker = window.setInterval(() => {
+// The installed program runs across views. Only observations are patched; the
+// independent replay shows history and never delays input or writes machine state.
+function syncInterruptTicker() {
+  const wanted = state.active.id === 5 && state.ui.introDismissed;
+  if (wanted && interruptTicker === undefined) {
+    interruptTicker = window.setInterval(() => {
       if (state.active.id !== 5) return;
-      state.active.machine = tickLoop(state.active.machine, LOOP_TICK_PASSES);
-      refreshLoopCounters();
-    }, LOOP_TICK_MS);
-  } else if (!wanted && loopTicker !== undefined) {
-    window.clearInterval(loopTicker);
-    loopTicker = undefined;
+      const wasComplete = missionComplete(state);
+      state.active.machine = tickInterrupt(state.active.machine, INTERRUPT_TICK_MS);
+      state.ui.irqReplayElapsedMs = Math.min(1_000, state.ui.irqReplayElapsedMs + INTERRUPT_TICK_MS);
+      refreshInterruptObservation();
+      if (!wasComplete && missionComplete(state)) announce(currentChapter(state).mission.successMessage);
+    }, INTERRUPT_TICK_MS);
+  } else if (!wanted && interruptTicker !== undefined) {
+    stopInterruptTicker();
   }
 }
 
-function stopLoopTicker() {
-  window.clearInterval(loopTicker);
-  loopTicker = undefined;
+function stopInterruptTicker() {
+  window.clearInterval(interruptTicker);
+  interruptTicker = undefined;
 }
 
-function refreshLoopCounters() {
+function refreshInterruptObservation() {
   if (state.active.id !== 5) return;
   const machine = state.active.machine;
-  const passes = document.getElementById("loop-passes");
-  if (passes) passes.textContent = machine.loopPasses.toLocaleString("en-US");
-  const reads = document.getElementById("button-reads");
-  if (reads) reads.textContent = machine.buttonReads.toLocaleString("en-US");
-  const beat = document.getElementById("loop-heartbeat");
-  if (beat) beat.textContent = machine.heartbeat.toLocaleString("en-US");
-  const buttonValue = document.getElementById("button-value");
-  if (buttonValue) buttonValue.textContent = formatWord(machine.buttonValue);
-  const ledValue = document.getElementById("led-value");
-  if (ledValue) ledValue.textContent = formatWord(machine.ledValue);
-  document.querySelectorAll(".led-light").forEach((light) => light.classList.toggle("on", machine.ledValue === 1));
-  const preview = document.getElementById("station-serial");
-  if (preview) preview.textContent = stationSerialSummary(state);
-  const ledStatus = document.getElementById("pocket-led-status");
-  if (ledStatus) ledStatus.textContent = machine.ledValue ? "on" : "off";
-  const buttonStatus = document.getElementById("pocket-button-status");
-  if (buttonStatus) buttonStatus.textContent = machine.buttonValue ? "pressed" : "released";
-  if (missionComplete(state)) {
-    const success = document.getElementById("mission-success");
-    if (success) success.innerHTML = renderSuccess(state);
+  const values: Record<string, string> = {
+    "button-reads": machine.buttonReads.toLocaleString("en-US"),
+    "irq-count": machine.irqCount.toLocaleString("en-US"),
+    "cpu-state": machine.cpuState,
+    "cpu-led": machine.ledValue ? "ON" : "OFF",
+    "interrupt-cpu-note": interruptCpuNote(machine),
+  };
+  for (const [id, value] of Object.entries(values)) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  }
+  const current = irqReplayStep(state);
+  document.querySelectorAll<HTMLElement>(".irq-trace-step").forEach((element) => {
+    const index = Number(element.dataset.step);
+    element.classList.toggle("active", index === current);
+    element.classList.toggle("reached", index <= current);
+    if (index === current) element.setAttribute("aria-current", "step");
+    else element.removeAttribute("aria-current");
+  });
+  refreshInputObservation();
+}
+
+function stopDisplayTicker() {
+  window.clearInterval(displayTicker);
+  displayTicker = undefined;
+}
+
+function syncDisplayTicker() {
+  const wanted = (state.active.id === 6 || state.active.id === 8) && state.ui.introDismissed;
+  if (wanted && displayTicker === undefined) {
+    displayTicker = window.setInterval(() => {
+      if (state.active.id !== 6 && state.active.id !== 8) return;
+      const wasComplete = missionComplete(state);
+      if (state.active.id === 6) state.active.machine = tickDisplay(state.active.machine, 100);
+      else state.active.machine = tickMoving(state.active.machine, 100);
+      refreshDisplayObservation();
+      if (!wasComplete && missionComplete(state)) announce(currentChapter(state).mission.successMessage);
+    }, 100);
+  } else if (!wanted) stopDisplayTicker();
+}
+
+function refreshDisplayObservation() {
+  if (state.active.id !== 6 && state.active.id !== 7 && state.active.id !== 8) return;
+  document.querySelectorAll<HTMLElement>(".device-screen").forEach((screen) => { screen.innerHTML = renderDisplayScreen(state); });
+  const readout = document.getElementById("display-live");
+  if (readout) readout.innerHTML = renderDisplayReadout(state, readout.dataset.readout === "hardware");
+  if (state.active.id === 6 || state.active.id === 8) {
+    refreshInputObservation();
+    const ram = document.getElementById("framebuffer-live");
+    if (ram) ram.innerHTML = renderFramebufferRam(state);
+  } else {
+    const m = state.active.machine;
+    document.querySelectorAll<HTMLElement>(".coordinate-cell").forEach((cell) => {
+      const x = Number(cell.dataset.x), y = Number(cell.dataset.y);
+      const requested = x === m.x && y === m.y;
+      const actual = x === m.actualPixel?.x && y === m.actualPixel?.y;
+      cell.classList.toggle("requested", requested);
+      cell.classList.toggle("actual", actual);
+      cell.setAttribute("aria-pressed", String(requested));
+      cell.setAttribute("aria-label", `Test (${x}, ${y})${requested ? ", requested" : ""}${actual ? ", actual pixel" : ""}`);
+    });
+    const ram = document.getElementById("framebuffer-live");
+    if (ram) ram.innerHTML = renderFramebufferRam(state);
+    const observed = document.getElementById("mission-observed");
+    if (observed) { observed.textContent = `${m.observedTargets.length}/5 VERIFIED`; observed.classList.toggle("pass", missionComplete(state)); }
+    const status = document.getElementById("station-serial");
+    if (status) status.textContent = stationSerialSummary(state);
+    refreshSuccess();
   }
 }
 
-// The A button is a real hold. Pressing runs one polling pass, which is what the
-// program's while(1) would notice, and the LED follows from that pass alone.
+function refreshSuccess() {
+  const success = document.getElementById("mission-success");
+  const complete = missionComplete(state);
+  if (success && Boolean(success.firstElementChild) !== complete) success.innerHTML = renderSuccess(state);
+}
+
+function testCoordinate(x: number, y: number) {
+  if (state.active.id !== 7 || state.ui.buildPhase !== "idle" || !state.ui.introDismissed) return;
+  const wasComplete = missionComplete(state);
+  state.active.machine = setFramebufferPosition(state.active.machine, x, y);
+  refreshDisplayObservation();
+  if (!wasComplete && missionComplete(state)) announce(currentChapter(state).mission.successMessage);
+}
+
+function moveMarker(direction: string) {
+  if ((state.active.id !== 7 && state.active.id !== 8) || state.ui.buildPhase !== "idle" || !state.ui.introDismissed) return;
+  const offset = { up: [0, -1], left: [-1, 0], right: [1, 0], down: [0, 1] }[direction];
+  if (!offset) return;
+  const wasComplete = missionComplete(state);
+  if (state.active.id === 7) state.active.machine = moveFramebufferMarker(state.active.machine, offset[0]!, offset[1]!);
+  else state.active.machine = moveMovingMarker(state.active.machine, offset[0]!, offset[1]!);
+  refreshDisplayObservation();
+  if (!wasComplete && missionComplete(state)) announce(currentChapter(state).mission.successMessage);
+}
+
+// Both pointer and keyboard input are edges. Episode 04 polls once; Episode 05
+// delivers the edge through the currently installed polling or IRQ program.
 function setButton(held: boolean) {
-  if ((state.active.id !== 4 && state.active.id !== 5) || state.ui.buttonHeld === held) return;
+  if ((state.active.id !== 4 && state.active.id !== 5 && state.active.id !== 6 && state.active.id !== 8) || state.ui.buttonHeld === held || state.ui.buildPhase !== "idle" || !state.ui.introDismissed) return;
   state.ui.buttonHeld = held;
   const wasComplete = missionComplete(state);
   const pressed = held ? 1 : 0;
   state.active.machine = state.active.id === 4
     ? pollInput(state.active.machine, pressed)
-    : pollLoop(state.active.machine, pressed);
+    : state.active.id === 5 ? setInterruptButton(state.active.machine, pressed)
+    : state.active.id === 6 ? setDisplayButton(state.active.machine, pressed)
+    : setMovingButton(state.active.machine, pressed);
+  if (state.active.id === 5) {
+    state.ui.irqReplayElapsedMs = 0;
+    const replay = document.getElementById("irq-replay");
+    if (replay) replay.innerHTML = renderIrqReplay(state);
+  }
   const complete = missionComplete(state);
   if (complete && !wasComplete) announce(currentChapter(state).mission.successMessage);
-  else if (state.active.id === 4) announce(held
+  else announce(held
     ? state.active.machine.ledValue ? "Button pressed. The LED is on." : "Button pressed. The LED did not change."
     : `Button released. The LED is ${state.active.machine.ledValue ? "still on" : "off"}.`);
 }
 
 function refreshInputObservation() {
-  if (state.active.id !== 4 && state.active.id !== 5) return;
+  if (state.active.id !== 4 && state.active.id !== 5 && state.active.id !== 6 && state.active.id !== 8) return;
   const machine = state.active.machine;
   const buttonValue = document.getElementById("button-value");
   if (buttonValue) buttonValue.textContent = formatWord(machine.buttonValue);
@@ -196,10 +287,14 @@ function refreshInputObservation() {
   if (ledStatus) ledStatus.textContent = machine.ledValue ? "on" : "off";
   const buttonStatus = document.getElementById("pocket-button-status");
   if (buttonStatus) buttonStatus.textContent = machine.buttonValue ? "pressed" : "released";
-  const strip = document.getElementById("mission-status");
-  if (strip) strip.innerHTML = renderMissionStatus(state);
+  const complete = missionComplete(state);
+  const observed = document.getElementById("mission-observed");
+  if (observed) {
+    observed.textContent = state.active.id === 5 ? state.active.machine.cpuState : state.active.id === 6 || state.active.id === 8 ? displayStatus(state) : machine.ledValue ? "ON" : "OFF";
+    observed.classList.toggle("pass", complete);
+  }
   const success = document.getElementById("mission-success");
-  if (success) success.innerHTML = renderSuccess(state);
+  if (success && Boolean(success.firstElementChild) !== complete) success.innerHTML = renderSuccess(state);
 }
 
 function refreshLights() {
@@ -291,7 +386,7 @@ async function buildAndFlash() {
   const error = chapterId === 1 && byte === null ? "Enter one hex byte from 0x00 to 0xFF."
     : chapterId === 2 ? store.error
     : chapterId === 3 && timebase === null ? "Choose a supported program timebase."
-    : chapterId === 4 && program!.blocks.some((block) => !state.ui.draftBlocks.includes(block.id))
+    : chapterId === 4 && program!.blocks.some((block) => !(state.ui.draftBlocks.body ?? []).includes(block.id))
       ? "Place every block before building." : "";
   if (error) {
     state.ui.feedback = `Build stopped. ${error} The running firmware is unchanged.`;
@@ -301,7 +396,10 @@ async function buildAndFlash() {
     return;
   }
   if (chapterId === 3) stopTimer();
-  if (chapterId === 4 || chapterId === 5) state.ui.buttonHeld = false;
+  if (chapterId === 4 || chapterId === 5 || chapterId === 6 || chapterId === 8) {
+    releaseHeldButton();
+    state.ui.irqReplayElapsedMs = 1_000;
+  }
   const attempt = ++buildAttempt;
   const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
   state.ui.feedback = "";
@@ -321,6 +419,8 @@ async function buildAndFlash() {
   render();
   await wait(400);
   if (attempt !== buildAttempt || state.active.id !== chapterId) return;
+  if (state.active.id === 5) stopInterruptTicker();
+  if (state.active.id === 6 || state.active.id === 8) stopDisplayTicker();
   if (state.active.id === 1) {
     state.active.machine = rebootTarget(flashFirmware(state.active.machine, byte!));
     state.ui.draftByte = formatByte(byte!);
@@ -337,18 +437,29 @@ async function buildAndFlash() {
     state.active.machine = rebootTimerTarget(flashTimerFirmware(state.active.machine, timebase!));
     state.ui.feedback = `Program timebase installed: ${formatFrequency(timebase!)}. The program now waits ${timerTargetTicks(timebase!).toLocaleString("en-US")} ticks. Observe two ticks; the hardware timer stays at 1 GHz.`;
   } else if (state.active.id === 5) {
-    state.active.machine = flashLoopProgram(state.active.machine, state.ui.draftBlocks);
-    state.ui.feedback = state.active.machine.installedBlocks[0] === "wait"
-      ? "loop.c installed. Open the cover on CPU and watch the read count while the button stays untouched."
-      : "loop.c installed. The loop still asks about the button on every pass. Compare the read count with the pass count.";
+    state.active.machine = flashInterruptProgram(state.active.machine, state.ui.draftInterrupts
+      ? interruptProgramFromDraft(state.ui.draftBlocks) : { kind: "polling" });
+    state.ui.irqReplayElapsedMs = 0;
+    state.ui.feedback = state.ui.draftInterrupts
+      ? "button.c installed. Watch the live CPU state, then press and release A. No ACK means the IRQ stays pending."
+      : "Polling installed again. BUTTON READS keeps increasing while the button is untouched. Switch to interrupts to repair it.";
+  } else if (state.active.id === 8) {
+    state.active.machine = flashMovingProgram(state.active.machine, movingProgramFromDraft(state.ui.draftBlocks));
+    state.ui.feedback = "events.c installed. Hold A for one second and use the D-pad. The handler must return so main can process frames.";
+  } else if (state.active.id === 7) {
+    state.active.machine = flashFramebufferProgram(state.active.machine, state.ui.draftRowBytes);
+    state.ui.feedback = "pixel.c installed. Test the center and all four corners; follow the actual write address.";
+  } else if (state.active.id === 6) {
+    state.active.machine = flashDisplayProgram(state.active.machine, state.ui.draftBlocks.setup ?? []);
+    state.ui.feedback = "display.c installed. Observe the screen and the actual startup log. Device readiness takes 500 ms.";
   } else {
-    state.active.machine = flashInputProgram(state.active.machine, state.ui.draftBlocks);
-    state.ui.feedback = `button.c installed with ${state.ui.draftBlocks.length} blocks. Hold the A button on the station and watch the LED.`;
+    state.active.machine = flashInputProgram(state.active.machine, state.ui.draftBlocks.body ?? []);
+    state.ui.feedback = `button.c installed with ${(state.ui.draftBlocks.body ?? []).length} blocks. Hold the A button on the station and watch the LED.`;
   }
   state.ui.buildPhase = "idle";
   state.ui.buildLog.push("✓ Pocket booted");
   if (state.active.id === 3) { render(); startTimer(); }
-  else if (state.active.id === 4 || state.active.id === 5) render();
+  else if (state.active.id >= 4) render();
   else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
   announce(state.ui.feedback);
@@ -362,6 +473,9 @@ function sentOnThisRun(): boolean {
 
 function resetTarget() {
   if (state.active.id === 0 || state.ui.buildPhase !== "idle") return;
+  releaseHeldButton();
+  if (state.active.id === 5) stopInterruptTicker();
+  if (state.active.id === 6 || state.active.id === 8) stopDisplayTicker();
   if (state.active.id === 1) {
     state.active.machine = rebootTarget(state.active.machine);
     state.ui.feedback = `Pocket reset. Received ${serialDisplay(state.active.machine.terminalOutput)} from the installed firmware.`;
@@ -377,15 +491,26 @@ function resetTarget() {
     state.ui.feedback = `Pocket reset. The diagnostic uses the installed ${formatFrequency(state.active.machine.timebaseHz)} program timebase; the hardware timer runs at 1 GHz.`;
   } else if (state.active.id === 5) {
     state.ui.buttonHeld = false;
-    state.active.machine = pollLoop(state.active.machine, 0);
-    state.ui.feedback = "Pocket reset. The installed loop is running again. Watch the read count on the cover.";
+    state.active.machine = rebootInterruptTarget(state.active.machine);
+    state.ui.irqReplayElapsedMs = 0;
+    state.ui.feedback = "Pocket reset. Counters and observations cleared; the installed program restarted. The editor draft is preserved.";
+  } else if (state.active.id === 8) {
+    state.active.machine = rebootMovingTarget(state.active.machine);
+    state.ui.feedback = "Pocket reset. Installed event flow restarted; frames, pending work, and observations cleared. The editor draft is preserved.";
+  } else if (state.active.id === 7) {
+    state.active.machine = rebootFramebufferTarget(state.active.machine);
+    state.ui.feedback = "Pocket reset. The installed ROW_BYTES is preserved; position and observations restarted. The draft is unchanged.";
+  } else if (state.active.id === 6) {
+    state.ui.buttonHeld = false;
+    state.active.machine = rebootDisplayTarget(state.active.machine);
+    state.ui.feedback = "Pocket reset. The installed startup sequence restarted; the editor draft is preserved.";
   } else {
     state.ui.buttonHeld = false;
     state.active.machine = pollInput(state.active.machine, 0);
     state.ui.feedback = "Pocket reset. The installed program ran again. Hold the A button and watch the LED.";
   }
   if (state.active.id === 3) { render(); startTimer(); }
-  else if (state.active.id === 4 || state.active.id === 5) render();
+  else if (state.active.id >= 4) render();
   else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
   announce(state.ui.feedback);
@@ -426,7 +551,8 @@ window.addEventListener("hashchange", () => {
     return;
   }
   const parsed = parseRoute(location.hash);
-  if (parsed.route.chapterId !== state.active.id) { buildAttempt++; stopTimer(); stopLoopTicker(); }
+  releaseHeldButton();
+  if (parsed.route.chapterId !== state.active.id) { buildAttempt++; stopTimer(); stopInterruptTicker(); stopDisplayTicker(); }
   state = navigate(state, parsed.route);
   routeNotice = parsed.notice;
   canonicalizeRoute();
@@ -453,6 +579,12 @@ app.addEventListener("click", (event) => {
       if (view) goTo(state.active.id, view);
       return;
     }
+    case "test-pixel":
+      testCoordinate(Number(button.dataset.x), Number(button.dataset.y));
+      return;
+    case "move-marker":
+      moveMarker(button.dataset.direction ?? "");
+      return;
     case "build-flash":
       void buildAndFlash();
       return;
@@ -465,28 +597,31 @@ app.addEventListener("click", (event) => {
     }
     case "cover-module": {
       const module = button.dataset.module;
-      if (module !== "cpu" && module !== "ram") return;
+      if (module !== "cpu" && module !== "ram" && module !== "display") return;
       state.ui.coverModule = module;
       render();
       announce(`${module.toUpperCase()} module.`);
       return;
     }
+    case "switch-interrupts":
+      if (state.ui.buildPhase !== "idle") return;
+      state = switchToInterruptDraft(state);
+      render();
+      announce("Interrupt draft opened. The installed polling program is still running.");
+      return;
     case "block-add":
     case "block-remove": {
       const program = currentChapter(state).computer.program;
       const id = button.dataset.block;
-      if (!program || !id || state.ui.buildPhase !== "idle") return;
-      state.ui.draftBlocks = button.dataset.action === "block-add"
-        ? [...state.ui.draftBlocks, id]
-        : state.ui.draftBlocks.filter((block) => block !== id);
+      const slot = program?.slots.find((candidate) => candidate.id === button.dataset.slot);
+      if (!program || !slot || !id || !slot.blocks.includes(id) || state.ui.buildPhase !== "idle") return;
+      state.ui.draftBlocks = editProgramBlock(program, state.ui.draftBlocks, slot.id, id, button.dataset.action === "block-add");
       render();
-      const status = document.getElementById("source-status");
-      if (status) status.textContent = sourceStatus(state);
       return;
     }
     case "next-episode": {
-      const next = Number(button.dataset.episode);
-      if (next === 2 || next === 3) goTo(next, "station");
+      const next = chapters.find((candidate) => candidate.id === Number(button.dataset.episode));
+      if (next) goTo(next.id as ChapterId, "station");
       return;
     }
     case "reset-target":
@@ -578,9 +713,11 @@ app.addEventListener("click", (event) => {
       return;
     }
     case "reset":
+      releaseHeldButton();
       buildAttempt++;
       stopTimer();
-      stopLoopTicker();
+      stopInterruptTicker();
+      stopDisplayTicker();
       state = resetMission(state);
       state.ui.feedback = t("resetFeedback");
       break;
@@ -593,7 +730,13 @@ app.addEventListener("click", (event) => {
 app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
-    if (["0", "1", "2", "3", "4", "5"].includes(target.value)) goTo(Number(target.value) as ChapterId, state.view);
+    if (chapters.some((chapter) => String(chapter.id) === target.value)) goTo(Number(target.value) as ChapterId, state.view);
+  } else if (target instanceof HTMLSelectElement && target.id === "row-bytes" && state.active.id === 7 && state.ui.buildPhase === "idle") {
+    const value = Number(target.value);
+    if (!ROW_BYTES_CHOICES.includes(value as RowBytes)) return;
+    state.ui.draftRowBytes = value as RowBytes;
+    const status = document.getElementById("source-status");
+    if (status) status.textContent = sourceStatus(state);
   } else if (target instanceof HTMLSelectElement && target.id === "timebase-frequency" && state.active.id === 3 && state.ui.buildPhase === "idle") {
     const timebase = parseTimebase(target.value);
     if (timebase === null) return;
@@ -647,6 +790,14 @@ document.querySelector<HTMLAnchorElement>(".skip-link")?.addEventListener("click
   main?.scrollIntoView({ block: "start" });
 });
 
+window.addEventListener("keydown", (event) => {
+  const direction = { ArrowUp: "up", ArrowLeft: "left", ArrowRight: "right", ArrowDown: "down" }[event.key];
+  if (!direction || event.repeat || event.ctrlKey || event.metaKey || event.altKey || (state.active.id !== 7 && state.active.id !== 8) || (state.view !== "pc" && state.view !== "station" && state.view !== "pocket")) return;
+  if (event.target instanceof Element && event.target.closest("input, select, textarea, [contenteditable]")) return;
+  event.preventDefault();
+  moveMarker(direction);
+});
+
 // The A button is a hold, not a click. Pointer and keyboard both press and release,
 // and losing focus or leaving the page releases too, so the machine is never stuck down.
 function isHoldTarget(target: EventTarget | null): boolean {
@@ -655,35 +806,63 @@ function isHoldTarget(target: EventTarget | null): boolean {
 
 for (const type of ["pointerdown", "keydown"] as const) {
   app.addEventListener(type, (event) => {
-    if (!isHoldTarget(event.target)) return;
-    if (type === "keydown" && event instanceof KeyboardEvent && event.repeat) return;
+    if (!isHoldTarget(event.target) || !state.ui.introDismissed || state.ui.buildPhase !== "idle") return;
+    if (event instanceof KeyboardEvent && (event.key !== " " && event.key !== "Enter" || event.repeat)) return;
+    if (event instanceof PointerEvent && event.button !== 0) return;
     event.preventDefault();
+    if (activeButtonPointer !== undefined || activeButtonKey !== undefined) return;
+    if (event instanceof PointerEvent) activeButtonPointer = event.pointerId;
+    if (event instanceof KeyboardEvent) activeButtonKey = event.key;
+    if (event.target instanceof HTMLButtonElement) {
+      event.target.focus({ preventScroll: true });
+      if (event instanceof PointerEvent) event.target.setPointerCapture(event.pointerId);
+    }
     setButton(true);
     renderPocketButton();
   });
 }
 for (const type of ["pointerup", "keyup", "pointercancel", "blur"] as const) {
   app.addEventListener(type, (event) => {
-    if (type === "blur" ? !state.ui.buttonHeld : !isHoldTarget(event.target)) return;
-    setButton(false);
-    renderPocketButton();
-  });
+    if (event instanceof PointerEvent && event.pointerId !== activeButtonPointer) return;
+    if (event instanceof KeyboardEvent && event.key !== activeButtonKey) return;
+    // Pointer capture continues a hold when a second finger focuses the D-pad.
+    if (type === "blur" && activeButtonKey === undefined) return;
+    if (!isHoldTarget(event.target)) return;
+    releaseHeldButton();
+  }, type === "blur");
 }
+
+function releaseHeldButton() {
+  activeButtonPointer = undefined;
+  activeButtonKey = undefined;
+  if (!state.ui.buttonHeld) return;
+  setButton(false);
+  renderPocketButton();
+}
+
+function releasePointer(event: PointerEvent) {
+  if (event.pointerId === activeButtonPointer) releaseHeldButton();
+}
+window.addEventListener("pointerup", releasePointer);
+window.addEventListener("pointercancel", releasePointer);
+window.addEventListener("blur", releaseHeldButton);
 
 // A full render would drop the focus the player is holding, so the press only
 // patches the light and the readout around it.
 function renderPocketButton() {
-  if (state.active.id !== 4) return;
+  if (state.active.id !== 4 && state.active.id !== 5 && state.active.id !== 6 && state.active.id !== 8) return;
   const button = document.getElementById("pocket-button-a");
   if (button instanceof HTMLButtonElement) {
     button.classList.toggle("pressed", state.ui.buttonHeld);
     button.setAttribute("aria-pressed", String(state.ui.buttonHeld));
   }
-  refreshInputObservation();
+  if (state.active.id === 5) refreshInterruptObservation();
+  else if (state.active.id >= 6) refreshDisplayObservation();
+  else refreshInputObservation();
 }
 
 canonicalizeRoute();
 render();
-window.addEventListener("pagehide", () => { stopTimer(); stopMtimeTicker(); stopLoopTicker(); setButton(false); });
-window.addEventListener("pageshow", startTimer);
+window.addEventListener("pagehide", () => { releaseHeldButton(); stopTimer(); stopMtimeTicker(); stopInterruptTicker(); stopDisplayTicker(); });
+window.addEventListener("pageshow", () => { startTimer(); syncMtimeTicker(); syncInterruptTicker(); syncDisplayTicker(); });
 if (routeNotice) announce(routeNotice);

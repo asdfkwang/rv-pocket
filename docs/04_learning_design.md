@@ -27,18 +27,19 @@ Quizzes and episodes are open-book/open-web by design. A player who cannot recal
 | 01 | CPU/RAM/UART roles and one guided transmit request | SoC internals, address math, CPU instruction execution |
 | 02–03 | RAM addresses/data and a named timer control | CPU registers, PC, assembly handlers |
 | 04 | Input polling and basic MMIO read/write through a button and an LED | CPU registers, PC, assembly handlers |
-| 05 | When work runs: an unconditional loop versus waiting for a change | Trap/CSR internals, interrupt controller setup |
-| 06–07 | Display control and memory map with a simple test pattern, then pixel math | Trap/CSR internals |
-| 08 | Notification, pause, handle event, resume interrupted work | Implementation of saving/restoring context, stack, trap CSRs |
+| 05 | Polling cost, interrupt, handler, CPU wait/wakeup, and acknowledge | Trap/CSR internals, interrupt controller setup |
+| 06 | Device power, readiness, initialization order, and a visible test pattern | Display transport and runtime readiness wait |
+| 07 | Coordinates → byte offset → RAM address, one byte per pixel, row stride | CPU register tracing, assembly, color formats |
+| 08 | Short IRQ handlers, recorded input events, main processing, safe idle wait, frame service | Context preservation, stack, trap CSRs, queue synchronization |
 | 09–10 | CPU registers, PC, arithmetic, load/store, branches | Trap/CSR internals |
 | 15–16 | Calls/stack, followed by fault diagnosis, saved PC and trap CSR introduction | Full interrupt-controller configuration |
 | 20 | Interrupt internals and controller state using earlier CPU/trap knowledge | No new early-episode prerequisite |
 
 The [roadmap](03_episode_roadmap.md) owns episode numbers and repair details. Device registers in early MMIO episodes are peripheral control/status locations; they are not the CPU register file taught in Episode 09.
 
-For Episode 08, “save/return” means that interrupted work resumes correctly. Use a supplied event/handler/resume model. Do not require an assembly prologue, PC calculation, CSR manipulation, or trap-return instruction to complete that early repair.
+Episode 08 starts with an interrupt handler that waits for button release. The fault is long handler work, not a correct idle wait in main. The player records input and acknowledges in the handler, then applies input in main while timer events drive animation. Runtime supplies input snapshots, safe event_wait(), routing, and context preservation; do not require an assembly prologue, saved PC, CSR manipulation, or trap-return instruction.
 
-Episode 05 names the concept as polling cost, not as an interrupt. The player learns that re-reading a register forever is real work with a real cost, and that waiting for change is a decision the program can make on its own. The interrupt controller is still deferred to Episode 20.
+Episode 05 starts with the working polling program from Episode 04, exposes its repeated MMIO reads, then introduces BUTTON → IRQ → CPU. The player enables notification, waits in main, and reads/updates/acknowledges in a supplied handler model. Runtime handles context preservation, CSR configuration, controller routing, and trap entry/return. APLIC and IMSIC internals remain deferred to Episode 20; Episode 08 builds on this notification model when other work must keep progressing.
 
 ## Interaction progression
 

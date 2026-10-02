@@ -3,8 +3,11 @@ import { formatByte, parseByte, serialDisplay } from "../sim/uart";
 import { formatAddress, formatWord, readStoreAddress, WATCHED_RAM_ADDRESS } from "../sim/memory";
 import { TIMEBASE_RATES, parseTimebase, formatFrequency, formatInterval, timerTargetTicks, INITIAL_TIMEBASE_HZ } from "../sim/timer";
 import { runProgram } from "../sim/input";
-import { runLoop } from "../sim/loop";
+import { interruptProgramFromDraft, isInterruptSolution } from "../sim/interrupt";
+import { chapter04 } from "../chapters/chapter-04";
 import { escapeHtml as e } from "./html";
+import { renderPocketHardware } from "./pocket";
+import { displayStatus, renderDisplayReadout, renderCoordinateGrid } from "./display";
 
 export function sourceStatus(state: AppState): string {
   if (state.active.id === 1) {
@@ -23,47 +26,63 @@ export function sourceStatus(state: AppState): string {
     ? "Matches installed program timebase" : "Changed · Build & Flash to apply the program timebase";
   if (state.active.id === 4) {
     const program = currentChapter(state).computer.program!;
-    const missing = program.blocks.filter((block) => !state.ui.draftBlocks.includes(block.id)).length;
+    const missing = program.blocks.filter((block) => !(state.ui.draftBlocks.body ?? []).includes(block.id)).length;
     if (missing) return `Add the ${missing} missing block${missing > 1 ? "s" : ""}.`;
-    const pressed = runProgram(state.ui.draftBlocks, 1).led;
-    const released = runProgram(state.ui.draftBlocks, 0).led;
+    const pressed = runProgram(state.ui.draftBlocks.body ?? [], 1).led;
+    const released = runProgram(state.ui.draftBlocks.body ?? [], 0).led;
     if (pressed === 1 && released === 0) return "Draft answers both states · Build & Flash to install";
     if (pressed === 0 && released === 1) return "This order is inverted. The LED follows the wrong branch.";
     if (pressed === 0) return "This order never turns the LED on. Read the button before you test it.";
     return "This order leaves the LED on. It needs the other branch too.";
   }
   if (state.active.id === 5) {
-    const program = currentChapter(state).computer.program!;
-    const missing = program.blocks.filter((block) => !state.ui.draftBlocks.includes(block.id)).length;
-    if (missing) return `Add the ${missing} missing block${missing > 1 ? "s" : ""}.`;
-    if (state.ui.draftBlocks[0] !== "wait") {
-      return "The loop still reads the button on every pass. Open the cover on CPU and compare the two counts.";
-    }
-    return "Draft waits before reading · Build & Flash to install";
+    if (!state.ui.draftInterrupts) return "Polling keeps reading while nothing happens · Switch to interrupts to repair it";
+    const draft = interruptProgramFromDraft(state.ui.draftBlocks);
+    if (!draft.setup.includes("enable")) return "No button IRQs are enabled. You can flash this draft to observe it.";
+    if (!draft.wait.includes("wait")) return "Main never waits. The CPU will keep running between IRQs.";
+    if (!draft.handler.includes("read")) return "The handler never reads the button. UPDATE uses an initial value of zero.";
+    if (!draft.handler.includes("update")) return "The handler does not write the LED.";
+    if (!draft.handler.includes("ack")) return "The IRQ stays pending without ACK. It will call the handler again.";
+    if (!isInterruptSolution(draft)) return "Use the service order READ → UPDATE → ACK in the handler.";
+    return "Draft enables IRQs and waits · Build & Flash, then press and release A";
   }
+  if (state.active.id === 8) return "Draft event flow · Build & Flash, hold A for one second, and move with the D-pad";
+  if (state.active.id === 7) return state.ui.draftRowBytes === state.active.machine.installedRowBytes ? "Matches installed ROW_BYTES · test a coordinate" : "Changed · Build & Flash applies ROW_BYTES";
+  if (state.active.id === 6) return "Draft startup sequence · Build & Flash to observe what the device accepts";
   return "";
 }
 
 function renderProgram(state: AppState, editable: boolean): string {
-  const program = currentChapter(state).computer.program;
+  const inherited = state.active.id === 5 && !state.ui.draftInterrupts;
+  const program = inherited ? chapter04.computer.program : currentChapter(state).computer.program;
   if (!program) return "";
-  const chosen = state.ui.draftBlocks;
+  const placement = inherited ? { body: chapter04.computer.program!.solution } : state.ui.draftBlocks;
+  const disabled = state.ui.buildPhase !== "idle";
   const line = (text: string, extra = "") => `<div class="source-line"><span class="line-number" aria-hidden="true"></span><code>${e(text)}</code>${extra}</div>`;
-  const body = program.blocks.map((block) => {
-    if (!chosen.includes(block.id)) return "";
-    const remove = editable
-      ? `<button class="block-remove" data-action="block-remove" data-block="${e(block.id)}" aria-label="Remove ${e(block.lines[0] ?? block.id)}"${state.ui.buildPhase !== "idle" ? " disabled" : ""}>−</button>`
-      : "";
-    return line(block.lines.join("\n"), remove);
+  const source = program.skeleton.map((entry) => {
+    if (typeof entry === "string") return line(entry);
+    const slot = program.slots.find((candidate) => candidate.id === entry.slot)!;
+    const chosen = placement[slot.id] ?? [];
+    if (!chosen.length) return line(`${slot.indent}/* ${slot.label} */`);
+    return chosen.map((id) => {
+      const block = program.blocks.find((candidate) => candidate.id === id)!;
+      const remove = editable && !inherited
+        ? `<button class="block-remove" data-action="block-remove" data-slot="${e(slot.id)}" data-block="${e(id)}" aria-label="Remove ${e(block.label ?? block.lines[0] ?? id)}"${disabled ? " disabled" : ""}>−</button>` : "";
+      return block.lines.map((text, index) => line(slot.indent + text, index === 0 ? remove : "")).join("");
+    }).join("");
   }).join("");
-  const slots = chosen.length
-    ? body
-    : line("        /* place the blocks here */");
-  return `<div class="source-lines program-lines">${program.skeleton.slice(0, 3).map((text) => line(text)).join("")}${slots}${program.skeleton.slice(3).map((text) => line(text)).join("")}</div>
-    ${editable ? `<div class="block-palette" role="group" aria-label="Available blocks">${program.blocks.map((block) => `<button class="block-chip" data-action="block-add" data-block="${e(block.id)}"${chosen.includes(block.id) || state.ui.buildPhase !== "idle" ? " disabled" : ""}><code>${e(block.lines[0] ?? block.id)}</code></button>`).join("")}</div>` : ""}`;
+  const palette = !editable ? "" : inherited
+    ? `<button class="button secondary interrupt-switch" data-action="switch-interrupts"${disabled ? " disabled" : ""}>SWITCH TO INTERRUPTS</button><p class="runtime-note">The installed polling program keeps running until Build & Flash.</p>`
+    : `<div class="block-palette" role="group" aria-label="Available blocks">${program.slots.map((slot) => `<div class="block-slot"><span class="eyebrow">${e(slot.label)}</span>${slot.blocks.map((id) => {
+      const block = program.blocks.find((candidate) => candidate.id === id)!;
+      return `<button class="block-chip" data-action="block-add" data-slot="${e(slot.id)}" data-block="${e(id)}"${(placement[slot.id] ?? []).includes(id) || disabled ? " disabled" : ""}><code>${program.singleLocation && Object.entries(placement).some(([key, ids]) => key !== slot.id && ids.includes(id)) ? "MOVE HERE · " : ""}${e(block.label ?? block.lines[0] ?? id)}</code></button>`;
+    }).join("")}</div>`).join("")}</div>`;
+  const runtime = state.active.id === 8 && editable ? `<p class="runtime-note">Runtime snapshots input events and supplies a safe event_wait(): it sleeps only when no event is queued. Timer service requests arrive every 100 ms; this is an application frame rate, not the 1 GHz hardware timer frequency. A held handler blocks main; ACK clears the request but does not finish the handler.</p>` : state.active.id === 5 && state.ui.draftInterrupts && editable
+    ? `<p class="runtime-note">Supplied runtime connects BUTTON → IRQ → CPU and saves/restores context. Enable covers press and release; wait stops polling; ACK clears the pending request. CSR, trap, APLIC, and IMSIC setup are supplied.</p>` : "";
+  return `<div class="source-lines program-lines">${source}</div>${palette}${runtime}`;
 }
 
-// The station monitor and the PC editor show the same source; only the PC lets the player type.
+// The station monitor and the PC editor show the same source; only the PC is editable.
 export function renderSource(state: AppState, editable: boolean): string {
   const source = currentChapter(state).computer.source;
   if (!source) return "";
@@ -71,9 +90,11 @@ export function renderSource(state: AppState, editable: boolean): string {
   return `<div class="source-lines">${source.lines.map((line, index) => {
     const value = line.field === "byte" ? state.ui.draftByte
       : line.field === "store-address" ? state.ui.draftStoreAddress
+      : line.field === "row-bytes" ? String(state.ui.draftRowBytes)
       : line.field === "target-ticks" ? String(timerTargetTicks(parseTimebase(state.ui.draftTimebase) ?? INITIAL_TIMEBASE_HZ))
       : "";
     const input = !line.field || !editable ? ""
+      : line.field === "row-bytes" ? `<select id="row-bytes" aria-label="Row bytes"${disabled}>${[8, 16, 32].map((value) => `<option value="${value}"${value === state.ui.draftRowBytes ? " selected" : ""}>${value}</option>`).join("")}</select>`
       : `<input id="${line.field === "byte" ? "byte-value" : "store-address"}" class="byte-input${line.field === "store-address" ? " address-input" : ""}" type="text" value="${e(value)}" aria-label="${line.field === "byte" ? "Byte value" : "Store destination address"} in ${e(source.fileName)}" aria-describedby="editor-hint source-status" autocomplete="off" autocapitalize="off" spellcheck="false"${disabled}>`;
     const field = !line.field ? "" : input || `<span id="source-preview-${line.field}" class="byte-preview">${e(value)}</span>`;
     return `<div class="source-line"><span class="line-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><code>${e(line.before)}${field}<span class="code-comment">${e(line.after ?? "")}</span></code></div>`;
@@ -91,7 +112,9 @@ export function stationSerialSummary(state: AppState): string {
   if (state.active.id === 1) return `> ${serialDisplay(state.active.machine.terminalOutput)}`;
   if (state.active.id === 2) return `RAM ${formatAddress(WATCHED_RAM_ADDRESS)} · ${formatWord(state.active.machine.cells[WATCHED_RAM_ADDRESS] ?? 0)}`;
   if (state.active.id === 3) return state.active.machine.tickCount ? `tick ${state.active.machine.tickCount} / ${formatInterval(state.active.machine.observedIntervalMs)}` : "TIMER / waiting…";
-  if (state.active.id === 5) return `${state.active.machine.loopPasses.toLocaleString("en-US")} passes / ${state.active.machine.buttonReads.toLocaleString("en-US")} reads`;
+  if (state.active.id === 5) return `${state.active.machine.cpuState} / ${state.active.machine.buttonReads.toLocaleString("en-US")} reads / ${state.active.machine.irqCount.toLocaleString("en-US")} IRQs`;
+  if (state.active.id === 8) return `FRAME ${state.active.machine.frameCount} / ${state.active.machine.currentStep}`;
+  if (state.active.id === 6 || state.active.id === 7) return `DISPLAY / ${displayStatus(state)}`;
   return state.active.machine.ledValue ? "LED on" : "LED off";
 }
 
@@ -110,7 +133,7 @@ export function editorFileName(state: AppState): string {
 function serialText(state: AppState): string {
   if (state.active.id === 0) return "";
   if (state.active.id === 1) return `> ${serialDisplay(state.active.machine.terminalOutput)}`;
-  if (state.active.id === 4 || state.active.id === 5) return "";
+  if (state.active.id === 4 || state.active.id === 5 || state.active.id === 6 || state.active.id === 7 || state.active.id === 8) return "";
   return state.active.machine.terminalOutput;
 }
 
@@ -134,10 +157,10 @@ export function renderPc(state: AppState): string {
         ${renderControls(state)}
         <p id="source-status" class="source-status">${e(sourceStatus(state))}</p>
       </section>
-      <section class="serial-panel" aria-labelledby="serial-heading"><div class="panel-title"><h3 id="serial-heading">SERIAL</h3><span class="serial-connection"><span class="status-dot connected"></span>connected / 115200</span></div>
+      ${state.active.id >= 6 ? `<section class="live-pocket-panel"><div class="panel-title"><h3>LIVE POCKET</h3><span>INSTALLED PROGRAM</span></div>${renderPocketHardware(state, true)}${state.active.id === 7 ? `<p class="grid-key">OUTLINE = REQUEST · SOLID = ACTUAL<br>Click a cell or use the D-pad / arrow keys.</p><div id="coordinate-tests">${renderCoordinateGrid(state)}</div>` : ""}<div id="display-live">${renderDisplayReadout(state)}</div></section>` : `<section class="serial-panel" aria-labelledby="serial-heading"><div class="panel-title"><h3 id="serial-heading">SERIAL</h3><span class="serial-connection"><span class="status-dot connected"></span>connected / 115200</span></div>
         <pre id="serial-output" class="serial-output${state.active.id === 1 ? "" : " multiline"}" aria-label="Received serial output">${e(serialText(state))}</pre>
         <span class="serial-note">${e(serialNote)}</span>
-      </section>
+      </section>`}
     </div>
     <footer class="devstation-footer"><div class="pc-actions"><button id="build-flash" class="button primary" data-action="build-flash"${busy ? " disabled" : ""}>${phase}</button><button id="reset-target" class="button secondary" data-action="reset-target"${busy ? " disabled" : ""}>RESET</button><button class="text-button" data-action="view" data-view="datasheet" data-section="${chapter.computer.datasheetSection}">DATASHEET ↗</button><button class="text-button" data-action="view" data-view="station">STATION ↗</button></div><span class="eyebrow">EDIT → BUILD → FLASH → BOOT → OBSERVE</span></footer>
     <section class="build-panel" aria-labelledby="build-heading"><h3 id="build-heading" class="eyebrow">BUILD / FLASH</h3><pre id="build-log">${e(state.ui.buildLog.length ? state.ui.buildLog.join("\n") : "Ready. Build & Flash installs the edited settings and reboots the Pocket.")}</pre><span class="build-footnote">Local prototype simulation</span></section>

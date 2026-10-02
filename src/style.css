@@ -242,6 +242,11 @@ button.pocket-button:focus-visible { outline: 3px solid var(--accent); outline-o
 .block-chip:hover:not(:disabled) { background: #2b3b27; border-color: #7ba068; }
 .block-chip:disabled { opacity: 0.35; cursor: default; }
 .block-chip code { font: inherit; }
+.block-slot { display: flex; flex-direction: column; gap: 6px; }
+.block-slot + .block-slot { margin-top: 12px; }
+.block-slot > .eyebrow { color: #a4b09e; }
+.runtime-note { color: #a4b09e; font-size: 0.7rem; line-height: 1.7; max-width: 70ch; }
+.interrupt-switch { margin-top: 12px; }
 .source-status { color: #a4b09e; font: 0.7rem ui-monospace, monospace; margin: 28px 0 0; }
 .diagnostic-controls { margin: 28px 0 0; padding: 16px; border: 1px solid #566951; max-width: 370px; }
 .diagnostic-controls legend { color: #b2c6a8; font: 0.7rem ui-monospace, monospace; letter-spacing: 0.08em; padding: 0 6px; }
@@ -269,6 +274,13 @@ button.pocket-button:focus-visible { outline: 3px solid var(--accent); outline-o
 .word-row.button, .word-row.led { background: #dfe6f0; border-left-color: #4b6b96; }
 .word-gap { color: var(--muted); padding: 2px 8px; letter-spacing: 0.2em; }
 .inspection-note { font-size: 0.65rem; line-height: 1.7; color: var(--muted); margin: 14px 0 0; max-width: 68ch; }
+.irq-replay-panel { border-top: 1px solid #b6beaa; margin-top: 18px; padding-top: 14px; }
+.irq-replay-panel h4 { margin: 0; font-weight: 400; }
+.irq-trace { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 12px 0 0; font: 0.7rem/1.5 ui-monospace, monospace; }
+.irq-trace-step { padding: 5px 8px; border: 1px solid #aeb8a0; color: #68715e; }
+.irq-trace-step + .irq-trace-step::before { content: "→ "; }
+.irq-trace-step.reached { color: var(--ink); }
+.irq-trace-step.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pc-observation { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--ink); }
 .serial-panel { flex: 1; background: #202b24; color: #e0e8dc; padding: 20px; }
 .serial-connection { white-space: nowrap; }
@@ -642,3 +654,29 @@ button.pocket-button:focus-visible { outline: 3px solid var(--accent); outline-o
 .field-label { display: block; margin: 12px 0 4px; font-weight: 600; }
 .muted, .small { color: var(--muted); }
 .route-notice, .feedback { border-left: 4px solid var(--ink); padding-left: 12px; }
+
+/* Small logical display: no image assets or canvas runtime. */
+.pixel-screen { display: grid; grid-template-columns: repeat(16, 1fr); grid-template-rows: repeat(8, 1fr); width: 100%; height: 100%; gap: 1px; padding: 4px; }
+.display-pixel { display: block; background: #16231b; min-width: 0; }
+.display-pixel.on { background: #b9da85; box-shadow: 0 0 3px #b9da85; }
+.live-pocket-panel { padding: 0 18px 18px; min-width: 0; border-left: 1px solid var(--line); }
+.live-pocket-panel .device { display: block; max-width: 290px; margin: 18px auto; }
+.live-pocket-panel .device-screen { height: 135px; border: 8px solid #8b9280; }
+.display-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.6 ui-monospace, monospace; }
+@media (max-width: 760px) { .live-pocket-panel { border-left: 0; border-top: 1px solid var(--line); } }
+
+.coordinate-grid { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; margin: 12px 0; }
+.coordinate-cell { aspect-ratio: 1; padding: 0; background: #d5dcc8; border: 1px solid #a1ad91; cursor: pointer; }
+.coordinate-cell.requested { outline: 2px solid var(--ink); outline-offset: -2px; }
+.coordinate-cell.actual { background: #416839; }
+.coordinate-cell:focus-visible { outline: 3px solid #bf7534; outline-offset: 1px; }
+.grid-key { font: 0.7rem/1.6 ui-monospace, monospace; }
+.dpad-buttons { display: grid; grid-template: repeat(3, 24px) / repeat(3, 24px); gap: 2px; }
+.dpad-key { padding: 0; background: #4e5641; color: #fff; border: 0; border-radius: 3px; cursor: pointer; }
+.dpad-key.up { grid-area: 1 / 2; }.dpad-key.left { grid-area: 2 / 1; }.dpad-key.right { grid-area: 2 / 3; }.dpad-key.down { grid-area: 3 / 2; }
+.framebuffer-rows { display: grid; gap: 3px; font: 0.7rem/1.6 ui-monospace, monospace; overflow-x: auto; }
+.framebuffer-row { white-space: nowrap; }.framebuffer-byte { display: inline-block; padding: 0 3px; }.framebuffer-byte.on { background: #b9da85; color: #16231b; }
+
+.display-pixel.auto { background: #65bea7; box-shadow: 0 0 3px #65bea7; }
+
+.framebuffer-byte.last { outline: 2px solid var(--ink); outline-offset: -2px; }

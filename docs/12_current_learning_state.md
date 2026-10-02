@@ -6,7 +6,7 @@ This is a historical inventory of material discussed before the problem-driven g
 
 Earlier lessons and quizzes use **Study Module NN**. The game uses **Episode NN** (plus an unnumbered **Prologue** opening), defined only in the [episode roadmap](03_episode_roadmap.md). Manual knowledge units will use a separate **Manual Chapter NN** system with no numeric mapping to episodes. There is no numeric one-to-one mapping between any of these systems.
 
-In particular, the old “Chapter 12 quiz” is **Study Module 12**: register/PC tracing with `add` and `addi`. Its material belongs mainly in game Episode 07 — Wrong Place. Game Episode 12 — The Old Input is the later stale-cache/RAM-buffer repair.
+In particular, the old “Chapter 12 quiz” is **Study Module 12**: register/PC tracing with `add` and `addi`. Its material belongs mainly in game Episodes 09–10, which introduce CPU execution. Game Episode 12 — The Old Input is the later stale-cache/RAM-buffer repair.
 
 ## Material already discussed
 
@@ -17,7 +17,7 @@ In particular, the old “Chapter 12 quiz” is **Study Module 12**: register/PC
 | Timer/counter and polling | Episodes 03–04 |
 | Memory map and MMIO | Basic input access in 04, expanded device mapping in 06 |
 | IRQ and interrupt controllers | Conceptual event/handler/resume in 05; internals/controller work in 19 |
-| Registers, PC, ALU, fetch/decode/execute, `x0`, `add`, `addi`, immediates | Episode 07 |
+| Registers, PC, ALU, fetch/decode/execute, `x0`, `add`, `addi`, immediates | Episodes 09–10 |
 | DMA and bus-master behavior | Episode 10 |
 | Cache, hit/miss, cache line, dirty data, clean/writeback | Episode 11 |
 | CPU/DMA stale data and cache coherency | Episode 12 |
@@ -41,4 +41,4 @@ A five-question Study Module 12 quiz was started. The historical note records th
 
 ## Next study topic to adapt
 
-Load/store, RAM ↔ register movement, base+offset addressing, and effective-address calculation are the next study topics. In the game, they belong in Episode 08 — Missing Data, where moving data from RAM into the display path creates a concrete need for them.
+Load/store, RAM ↔ register movement, base+offset addressing, and effective-address calculation are the next study topics. Episode 07 — Wrong Place uses a bounded framebuffer byte-address calculation without register tracing. CPU execution and explicit RAM-to-register work belong to the later CPU episodes. Episode 08 — Keep Moving instead teaches short handlers and input/frame event processing.

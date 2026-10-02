@@ -55,6 +55,23 @@ DATASHEET is the device reference: memory-map ranges, UART register behavior, AS
 - Tick updates preserve reading and editing controls. Changing views leaves the diagnostic running; leaving the episode cancels its pending ticks.
 - All three checks produce BASIC DIAGNOSTICS COMPLETE. The display remains black, awaiting its own bring-up episode.
 
+## Episode 05 — Stop Asking
+
+- The inherited program is Episode 04's functioning MMIO button-to-LED polling loop. The prototype aggregates 60,000 reads per simulated second as an observation rate, not a CPU clock measurement.
+- Supplied `gpio_irq_enable(BUTTON_A)` enables notification on both press and release. `cpu_wait()` waits without polling the button. `gpio_irq_ack()` clears the pending request after the handler reads the button and updates the LED.
+- BUTTON → IRQ → CPU is the exposed path. Routing, CSR setup, trap entry/return, and context preservation are supplied runtime behavior. No APLIC or IMSIC register simulation is added in this episode.
+- IRQ COUNT counts handler deliveries, not merely button edges. An unacknowledged source remains pending and is delivered again once per 100 ms simulation tick, keeping CPU STATE RUNNING. With ACK and WAIT, one physical edge produces one read and one delivery, then CPU STATE returns to WAITING.
+- Handler execution is immediate. The separately labelled recent-event replay records wake/read/LED/ACK/wait and does not delay input or alter live state. This is a constrained teaching model, without debounce, event coalescing races, or cycle-accurate interrupt timing.
+- Flash and target reset clear counters, pending state, trace, and completion evidence. A successful real press/release is followed by one second of idle verification. Draft editing and view changes do not replace installed firmware; resetting the episode restores polling.
+
+## Episodes 06–08 — Display and event demo
+
+- Episode 06's teaching display becomes ready 500 ms after power-on. Settings sent early are ignored. Supplied transport/readiness helpers expose POWER → WAIT READY → TEST → ENABLE without defining an Atlantis display MMIO block.
+- Episode 07 uses a framebuffer in ordinary RAM at 0x00003000–0x0000307F: 16×8 pixels, one byte per pixel, 16 bytes between scanout rows. The program's ROW_BYTES may be 8, 16, or 32. A write outside the framebuffer still reaches RAM but does not light a pixel. Display initialization and clearing visible bytes are supplied.
+- Episode 08 reuses the framebuffer for a marker and a bouncing dot. Runtime snapshots/queues input events, supplies safe event_wait(), and requests a frame every 100 ms. A long handler prevents application frame service while the hardware retains the last frame. Pending frames coalesce; they do not replay in a burst.
+- Read/record/ACK belong in the handler and input application belongs in main. ACK clears the request but does not return from a handler. Context preservation, CSR/trap/controller setup, and synchronization remain supplied.
+- The 10 Hz animation rate is independent of MTIME's fixed 1 GHz frequency. No new CPU instruction, graphics engine, display controller emulator, or OS scheduler is implied.
+
 ## Physical memory map
 
 The address ranges below inherit Atlantis's low-address layout. They include both endpoints. RV Pocket maps RAM directly at low addresses and has no DDR_HI window above 4 GiB. Gaps are unassigned. These addresses are platform choices, not requirements of the RISC-V ISA. `src/platform.ts` is the shared source for the browser's hardware reference and device constants.

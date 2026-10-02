@@ -1,45 +1,39 @@
 import type { Chapter } from "./types";
-import { createInitialLoopState, isLoopMissionComplete, type LoopMissionState } from "../sim/loop";
+import { createInitialInterruptState, isInterruptMissionComplete, type InterruptMissionState } from "../sim/interrupt";
 
-export const chapter05: Chapter<LoopMissionState> = {
+export const chapter05: Chapter<InterruptMissionState> = {
   id: 5,
-  slug: "the-busy-loop",
-  title: "The Busy Loop",
+  slug: "stop-asking",
+  title: "Stop Asking",
   mission: {
-    summary: "Keep the LED working, and stop the loop from burning the CPU while nothing happens.",
-    initialObservation: "The button program still works. But the cover tells a different story: the loop has run 180 times and read the button 180 times, and you have not touched anything. The heartbeat below the loop has run just as many times, because the loop never leaves. It is not broken. It is busy.",
-    successMessage: "The loop waits for a change instead of asking again.",
+    summary: "Keep the LED working. Make the CPU stop checking the button when nothing happens.",
+    initialObservation: "The button program from Episode 04 works: press A and the LED turns on; let go and it turns off. But open the cover on CPU. BUTTON READS keeps climbing even when you touch nothing. The CPU keeps asking the same address the same question. Let the button interrupt the CPU when it needs attention.",
+    successMessage: "The button calls. The CPU handles it, acknowledges the IRQ, and waits again.",
   },
-  next: { title: "Black Screen First" },
+  next: { id: 6, title: "First Light" },
   cover: { modules: ["cpu", "ram"], selected: "cpu" },
   workbench: { objects: ["pocket", "computer", "datasheet", "book", "uart-cable"] },
   computer: {
     panels: ["editor", "terminal"],
-    editorHint: "The loop must still notice a press. Put the block that keeps it from asking when nothing changed at the top, before the read.",
+    editorHint: "Replace polling with an interrupt. Enable button IRQs, wait in main, and read → update → acknowledge in the handler. Build & Flash installs your draft.",
     datasheetSection: "gpio",
     program: {
-      fileName: "loop.c",
-      skeleton: [
-        "int main(void)",
-        "{",
-        "    while (1) {",
-        "",
-        "        /* place the blocks here */",
-        "",
-        "        heartbeat++;   /* the second job */",
-        "    }",
-        "}",
+      fileName: "button.c",
+      skeleton: ["int main(void)", "{", { slot: "setup" }, "", "    while (1) {", { slot: "wait" }, "    }", "}", "", "void button_irq_handler(void)", "{", { slot: "handler" }, "}"],
+      slots: [
+        { id: "setup", label: "SETUP", indent: "    ", blocks: ["enable"] },
+        { id: "wait", label: "WAIT", indent: "        ", blocks: ["wait"] },
+        { id: "handler", label: "HANDLER", indent: "    ", blocks: ["read", "update", "ack"] },
       ],
       blocks: [
-        { id: "wait", lines: ["if (!button_changed()) continue;   /* skip the rest of this pass */"] },
-        { id: "read", lines: ["uint32_t button = read32(BUTTON_REG);"] },
-        { id: "if", lines: ["if (button & BUTTON_A) {"] },
-        { id: "led-on", lines: ["    write32(LED_REG, 1);"] },
-        { id: "else", lines: ["} else {"] },
-        { id: "led-off", lines: ["    write32(LED_REG, 0);"] },
+        { id: "enable", label: "ENABLE BUTTON IRQ", lines: ["gpio_irq_enable(BUTTON_A);"] },
+        { id: "wait", label: "WAIT FOR INTERRUPT", lines: ["cpu_wait();"] },
+        { id: "read", label: "READ BUTTON", lines: ["uint32_t button = read32(BUTTON_REG);"] },
+        { id: "update", label: "UPDATE LED", lines: ["if (button & BUTTON_A)", "    write32(LED_REG, 1);", "else", "    write32(LED_REG, 0);"] },
+        { id: "ack", label: "ACKNOWLEDGE IRQ", lines: ["gpio_irq_ack();"] },
       ],
-      solution: ["wait", "read", "if", "led-on", "else", "led-off"],
+      solution: ["enable", "wait", "read", "update", "ack"],
     },
   },
-  manual: [], quiz: [], createInitialState: createInitialLoopState, successCondition: isLoopMissionComplete,
+  manual: [], quiz: [], createInitialState: createInitialInterruptState, successCondition: isInterruptMissionComplete,
 };

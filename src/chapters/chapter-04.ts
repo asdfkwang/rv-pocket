@@ -10,7 +10,7 @@ export const chapter04: Chapter<InputMissionState> = {
     initialObservation: "The diagnostics are reliable now, but nothing on the Pocket answers a touch. Press the A button on the station: the LED stays dark. Open the cover and read the button register — the hardware is answering, so the program is what is missing.",
     successMessage: "Button and LED are connected.",
   },
-  next: { title: "One Press, Endless Move" },
+  next: { id: 5, title: "Stop Asking" },
   cover: { modules: ["ram"], selected: "ram" },
   workbench: { objects: ["pocket", "computer", "datasheet", "book", "uart-cable"] },
   computer: {
@@ -19,7 +19,8 @@ export const chapter04: Chapter<InputMissionState> = {
     datasheetSection: "gpio",
     program: {
       fileName: "button.c",
-      skeleton: ["int main(void)", "{", "    while (1) {", "", "        /* place the blocks here */", "", "    }", "}"],
+      skeleton: ["int main(void)", "{", "    while (1) {", { slot: "body" }, "        }", "    }", "}"],
+      slots: [{ id: "body", label: "LOOP BODY", indent: "        ", blocks: ["read", "if", "led-on", "else", "led-off"] }],
       blocks: [
         { id: "read", lines: ["uint32_t button = read32(BUTTON_REG);"] },
         { id: "if", lines: ["if (button & BUTTON_A) {"] },

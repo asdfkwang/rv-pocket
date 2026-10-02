@@ -9,11 +9,15 @@ function deskNote(chapterId: number): string {
   if (chapterId === 2) return "The store program is running.<br>Its output cannot show where the value went.";
   if (chapterId === 3) return "The timer diagnostic is running.<br>One second should feel like one second.";
   if (chapterId === 4) return "The button program is installed.<br>Press the A button and watch the LED.";
-  if (chapterId === 5) return "The loop is running.<br>Nothing has been pressed. Open the cover.";
+  if (chapterId === 5) return "The button program works.<br>Open the cover on CPU: does it ever stop asking?";
+  if (chapterId === 8) return "Hold A. Does the animation freeze?<br>Open CPU and follow the handler.";
+  if (chapterId === 7) return "Where did that pixel go?<br>Follow the byte address in DISPLAY and RAM.";
+  if (chapterId === 6) return "The LED works. The screen is black.<br>Open DISPLAY to inspect its startup.";
   return "The Pocket, its development PC,<br>and two books left beside them.";
 }
 
 function pocketLabel(chapterId: number): string {
+  if (chapterId >= 6) return "Inspect the live display ↗";
   return chapterId === 4 || chapterId === 5 ? "Hold the A button · screen dark" : "Power on · screen dark ↗";
 }
 

@@ -6,6 +6,47 @@ import { TIMER_ADDRESS } from "./sim/timer";
 // RV Pocket's Atlantis-inspired hardware reference, separate from the study book.
 export const DATASHEET_SECTIONS = [
   {
+    id: "events", title: "Input and Frame Events",
+    summary: "A button IRQ notifies the CPU. A short handler records the input and returns; main applies the event and draws the next screen.",
+    columns: ["Operation", "Responsibility"],
+    rows: [
+      ["READ BUTTON", "Snapshot the input for this handler invocation"],
+      ["RECORD INPUT EVENT", "Queue the snapshot for main"],
+      ["ACK IRQ", "Clear the source request; the handler still has to return"],
+      ["APPLY INPUT", "In main: A-down reverses the automatic dot; D-pad moves the marker"],
+      ["event_wait()", "Wait safely when the queue is empty; otherwise return the next event"],
+      ["timer_every_ms(100)", "Request a frame event at 10 Hz"],
+    ],
+    notes: [
+      "WAIT FOR RELEASE inside the handler holds the CPU there. Timer requests become pending, main cannot step the animation, and the display keeps scanning its last frame. ACK does not itself return from the handler.",
+      "Runtime snapshots and queues press, release, and D-pad events, preserves context, and supplies the safe wait-and-dequeue operation. Controller setup, trap CSRs, synchronization primitives, and OS scheduling remain deferred.",
+      "Press A once to reverse direction; holding it does not repeat the action. Release requests IRQ service but does not reverse direction again. D-pad clicks or arrow keys move one pixel per input.",
+      "Frame service is an application rate of ten updates per second, independent of the 1 GHz MTIME frequency. Requests coalesce while main is blocked; returning does not replay a burst of missed frames.",
+      "Missing ACK leaves the source pending. The prototype retries once per 100 ms tick, so a broken program remains observable without blocking the browser.",
+    ],
+  },
+  {
+    id: "display",
+    title: "Display",
+    summary: "The Pocket's teaching display has power, readiness, mode, and output state. Its test generator can light the screen before a framebuffer program is introduced.",
+    columns: ["Helper", "Behavior"],
+    rows: [
+      ["display_power_on()", "Start device power-up / ready after 500 ms"],
+      ["start_button_led_irqs()", "Start the supplied Episode 05 button service before display setup"],
+      ["display_wait_ready()", "Wait for READY; without power it cannot finish"],
+      ["display_select_test_mode()", "Select the internal test pattern once ready"],
+      ["display_enable()", "Enable output once ready and configured"],
+      ["FRAMEBUFFER", "0x00003000–0x0000307F / 16 × 8 pixels, 1 byte per pixel"],
+      ["ROW STRIDE", "16 bytes / address = FB_BASE + y × ROW_BYTES + x"],
+    ],
+    notes: [
+      "Episode 07 uses framebuffer mode, configured by the supplied runtime. clear_framebuffer() clears the 128 visible bytes before each marker write. Coordinates are test inputs for the installed program; they do not change the editor draft.",
+      "Settings sent before READY are ignored, not queued. Waiting later does not replay an ignored command. OPEN COVER shows actual execution results.",
+      "The supplied runtime handles display transport and readiness waiting. These helpers describe RV Pocket's teaching display, not an Atlantis display controller.",
+      "Editing a startup sequence changes the draft only. Build & Flash installs it; RESET restarts the installed sequence.",
+    ],
+  },
+  {
     id: "memory-map",
     title: "Memory Map",
     summary: "RV POCKET — RV32G. This SoC adopts the low-address layout of Tenstorrent Atlantis. The CPU uses this 32-bit physical address space to reach RAM, boot ROM, and memory-mapped peripherals.",
@@ -68,8 +109,11 @@ export const DATASHEET_SECTIONS = [
     notes: [
       "The Pocket's TTL GPIO sits in the gap between I2C4 and UART1. Atlantis's QEMU model has no GPIO, so these two registers are RV Pocket's own.",
       "One register can carry several states as separate bits, which is why the program tests a bit rather than the whole word.",
-      "Both registers appear as rows in the RAM module under OPEN COVER, the same way MTIME does in Episode 03. They are not a module of their own.",
-      `GPIO IRQ = ${GPIO_IRQ}. Episode 04's program polls the button register on every pass of its loop. Episode 05 shows what that costs and what waiting for a change saves. The interrupt itself is still a later episode.`,
+      "Both registers appear as rows in the RAM module under OPEN COVER in the button episodes, the same way MTIME does in Episode 03. They are not a module of their own. Later display episodes show framebuffer bytes in RAM.",
+      `GPIO IRQ = ${GPIO_IRQ}. Episode 04's program polls the button register on every pass of its loop. Episode 05 replaces polling with BUTTON → IRQ → CPU: hardware asks for service instead of the CPU continually asking the button.`,
+      "gpio_irq_enable(BUTTON_A) enables notification on both press and release. cpu_wait() waits without reading BUTTON_REG. In button_irq_handler(), read the current button value, update the LED, then call gpio_irq_ack() to clear the pending request. Without ACK the supplied model delivers the request again.",
+      "Runtime supplies interrupt routing, context preservation, CSR setup, and trap entry/return. APLIC and IMSIC details are reserved for a later episode. These helpers are RV Pocket teaching interfaces, not register definitions for every GPIO device.",
+      "Episode 08 adds D-pad input through the supplied snapshot/event runtime. Keep the handler short: read, record an input event, acknowledge, then return. Main applies input and animation. A valid idle wait does not prevent queued events from being processed.",
       "A read tells the CPU what the hardware is doing. A write tells the hardware what to do. Nothing else moves the LED.",
     ],
   },
