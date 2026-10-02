@@ -10,7 +10,7 @@ export const chapter03: Chapter<TimerMissionState> = {
     initialObservation: "UART and RAM are reliable. The next diagnostic should report every second, but the serial ticks and the Pocket's timer LED are too slow. Does the program's timebase agree with the timer frequency in DATASHEET?",
     successMessage: "TIMER PASS — one tick every second.",
   },
-  next: { title: "Black Screen First" },
+  next: { title: "One Press, Endless Move" },
   cover: { modules: ["cpu", "ram"], selected: "ram" },
   workbench: { objects: ["pocket", "computer", "datasheet", "book", "uart-cable"] },
   computer: {

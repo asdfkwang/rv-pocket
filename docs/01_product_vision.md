@@ -29,7 +29,7 @@ The [roadmap](03_episode_roadmap.md) owns the exact order and scope. Its broad p
 
 ## Rewards and priorities
 
-Every repair must have an observable payoff: the first UART character, passing RAM diagnostics, responsive input, a working display, smoother rendering, restored sound, and eventually a Linux login and a playable old company game.
+Every repair must have an observable payoff: the first UART character, a value landing in RAM, a correct timer interval, responsive input, a working display, smoother rendering, restored sound, and eventually a Linux login and a playable old company game.
 
 When scope or schedule is constrained, prioritize:
 

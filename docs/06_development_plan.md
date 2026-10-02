@@ -51,10 +51,9 @@ Implement these only after the first slice is validated. Episode numbers and det
 
 | Phase | Game episodes | Implementation focus | Exit criterion |
 | --- | --- | --- | --- |
-| 4 | 02–05 | RAM, timer, input, conceptual interrupt events | Multiple repairs reuse views and the Episode contract with small simulation additions; no register/CSR prerequisites in Episode 05 |
+| 4 | 02–05 | RAM, timer, input, then basic display; conceptual interrupt events | Multiple repairs reuse views and the Episode contract with small simulation additions; no register/CSR prerequisites in Episode 07 |
 | --- | --- | --- | --- |
-| 4 | 02–05 | RAM, timer, input, conceptual interrupt events | Multiple repairs reuse views and the Episode contract with small simulation additions; no register/CSR prerequisites in Episode 05 |
-| 5 | 06–09 | Basic display, then register/PC tracing and guided instructions | A visible object can be repaired and moved using input |
+| 5 | 06–09 | Pixel math, non-blocking waits, then register/PC tracing and guided instructions | A visible object can be repaired and moved using input |
 | 6 | 10–13 | DMA, cache maintenance, coherency, ordering | Each failure has a distinct observable cause and repair |
 | 7 | 14–17 | Calls/stack, traps, audio, integrated game | A functioning bare-metal game device |
 | 8 | 18–24 | OS foundations and boot preparation | Prerequisites for Linux are motivated; the actual Linux runtime approach and revised estimate are agreed before Phase 9 |

@@ -2,6 +2,8 @@ import { currentChapter, type AppState } from "../app-state";
 import { formatByte, parseByte, serialDisplay } from "../sim/uart";
 import { formatAddress, formatWord, readStoreAddress, WATCHED_RAM_ADDRESS } from "../sim/memory";
 import { TIMEBASE_RATES, parseTimebase, formatFrequency, formatInterval, timerTargetTicks, INITIAL_TIMEBASE_HZ } from "../sim/timer";
+import { runProgram } from "../sim/input";
+import { runLoop } from "../sim/loop";
 import { escapeHtml as e } from "./html";
 
 export function sourceStatus(state: AppState): string {
@@ -19,7 +21,46 @@ export function sourceStatus(state: AppState): string {
   }
   if (state.active.id === 3) return parseTimebase(state.ui.draftTimebase) === state.active.machine.timebaseHz
     ? "Matches installed program timebase" : "Changed · Build & Flash to apply the program timebase";
+  if (state.active.id === 4) {
+    const program = currentChapter(state).computer.program!;
+    const missing = program.blocks.filter((block) => !state.ui.draftBlocks.includes(block.id)).length;
+    if (missing) return `Add the ${missing} missing block${missing > 1 ? "s" : ""}.`;
+    const pressed = runProgram(state.ui.draftBlocks, 1).led;
+    const released = runProgram(state.ui.draftBlocks, 0).led;
+    if (pressed === 1 && released === 0) return "Draft answers both states · Build & Flash to install";
+    if (pressed === 0 && released === 1) return "This order is inverted. The LED follows the wrong branch.";
+    if (pressed === 0) return "This order never turns the LED on. Read the button before you test it.";
+    return "This order leaves the LED on. It needs the other branch too.";
+  }
+  if (state.active.id === 5) {
+    const program = currentChapter(state).computer.program!;
+    const missing = program.blocks.filter((block) => !state.ui.draftBlocks.includes(block.id)).length;
+    if (missing) return `Add the ${missing} missing block${missing > 1 ? "s" : ""}.`;
+    if (state.ui.draftBlocks[0] !== "wait") {
+      return "The loop still reads the button on every pass. Open the cover on CPU and compare the two counts.";
+    }
+    return "Draft waits before reading · Build & Flash to install";
+  }
   return "";
+}
+
+function renderProgram(state: AppState, editable: boolean): string {
+  const program = currentChapter(state).computer.program;
+  if (!program) return "";
+  const chosen = state.ui.draftBlocks;
+  const line = (text: string, extra = "") => `<div class="source-line"><span class="line-number" aria-hidden="true"></span><code>${e(text)}</code>${extra}</div>`;
+  const body = program.blocks.map((block) => {
+    if (!chosen.includes(block.id)) return "";
+    const remove = editable
+      ? `<button class="block-remove" data-action="block-remove" data-block="${e(block.id)}" aria-label="Remove ${e(block.lines[0] ?? block.id)}"${state.ui.buildPhase !== "idle" ? " disabled" : ""}>−</button>`
+      : "";
+    return line(block.lines.join("\n"), remove);
+  }).join("");
+  const slots = chosen.length
+    ? body
+    : line("        /* place the blocks here */");
+  return `<div class="source-lines program-lines">${program.skeleton.slice(0, 3).map((text) => line(text)).join("")}${slots}${program.skeleton.slice(3).map((text) => line(text)).join("")}</div>
+    ${editable ? `<div class="block-palette" role="group" aria-label="Available blocks">${program.blocks.map((block) => `<button class="block-chip" data-action="block-add" data-block="${e(block.id)}"${chosen.includes(block.id) || state.ui.buildPhase !== "idle" ? " disabled" : ""}><code>${e(block.lines[0] ?? block.id)}</code></button>`).join("")}</div>` : ""}`;
 }
 
 // The station monitor and the PC editor show the same source; only the PC lets the player type.
@@ -49,31 +90,52 @@ export function stationSerialSummary(state: AppState): string {
   if (state.active.id === 0) return "—";
   if (state.active.id === 1) return `> ${serialDisplay(state.active.machine.terminalOutput)}`;
   if (state.active.id === 2) return `RAM ${formatAddress(WATCHED_RAM_ADDRESS)} · ${formatWord(state.active.machine.cells[WATCHED_RAM_ADDRESS] ?? 0)}`;
-  return state.active.machine.tickCount ? `tick ${state.active.machine.tickCount} / ${formatInterval(state.active.machine.observedIntervalMs)}` : "TIMER / waiting…";
+  if (state.active.id === 3) return state.active.machine.tickCount ? `tick ${state.active.machine.tickCount} / ${formatInterval(state.active.machine.observedIntervalMs)}` : "TIMER / waiting…";
+  if (state.active.id === 5) return `${state.active.machine.loopPasses.toLocaleString("en-US")} passes / ${state.active.machine.buttonReads.toLocaleString("en-US")} reads`;
+  return state.active.machine.ledValue ? "LED on" : "LED off";
+}
+
+// The monitor on the station shows the same assembled program, without the palette.
+export function renderEditor(state: AppState, editable: boolean): string {
+  return currentChapter(state).computer.program
+    ? renderProgram(state, editable)
+    : renderSource(state, editable);
+}
+
+export function editorFileName(state: AppState): string {
+  const computer = currentChapter(state).computer;
+  return computer.program?.fileName ?? computer.source?.fileName ?? "";
+}
+
+function serialText(state: AppState): string {
+  if (state.active.id === 0) return "";
+  if (state.active.id === 1) return `> ${serialDisplay(state.active.machine.terminalOutput)}`;
+  if (state.active.id === 4 || state.active.id === 5) return "";
+  return state.active.machine.terminalOutput;
 }
 
 export function renderPc(state: AppState): string {
   const chapter = currentChapter(state);
-  const source = chapter.computer.source;
-  if (state.active.id === 0 || !source) return `<section class="panel pc-welcome"><span class="eyebrow">RV DEVSTATION</span><h1>The development PC.</h1><p>The last project is still here. Start Episode 01 to open boot.S and listen to the Pocket.</p><button class="button primary" data-action="start">Start Episode 01 →</button></section>`;
-  const machine = state.active.machine;
+  const fileName = editorFileName(state);
+  if (state.active.id === 0 || !fileName) return `<section class="panel pc-welcome"><span class="eyebrow">RV DEVSTATION</span><h1>The development PC.</h1><p>The last project is still here. Start Episode 01 to open boot.S and listen to the Pocket.</p><button class="button primary" data-action="start">Start Episode 01 →</button></section>`;
   const serialNote = state.active.id === 1 ? "Last boot output"
     : state.active.id === 2 ? `Output of execution ${state.active.machine.executionCount} / the program may store instead of transmitting`
-    : "Live output / one line per timer tick";
+    : state.active.id === 3 ? "Live output / one line per timer tick"
+    : "This program sends nothing over the wire";
   const busy = state.ui.buildPhase !== "idle";
   const phase = { idle: "BUILD & FLASH", building: "BUILDING…", flashing: "FLASHING…", booting: "RESETTING…" }[state.ui.buildPhase];
   return `<section class="devstation" aria-labelledby="pc-heading">
-    <header class="devstation-header"><h2 id="pc-heading">RV DEVSTATION</h2><span>EP${String(chapter.id).padStart(2, "0")} / ${e(source.fileName)}</span></header>
+    <header class="devstation-header"><h2 id="pc-heading">RV DEVSTATION</h2><span>EP${String(chapter.id).padStart(2, "0")} / ${e(fileName)}</span></header>
     <div class="devstation-panels">
       <section class="editor-panel" aria-labelledby="editor-heading">
-        <div class="panel-title"><h3 id="editor-heading">${e(source.fileName)}</h3><span>EDITOR</span></div>
+        <div class="panel-title"><h3 id="editor-heading">${e(fileName)}</h3><span>EDITOR</span></div>
         <p id="editor-hint" class="editor-hint">${e(chapter.computer.editorHint ?? "")}</p>
-        ${renderSource(state, true)}
+        ${renderEditor(state, true)}
         ${renderControls(state)}
         <p id="source-status" class="source-status">${e(sourceStatus(state))}</p>
       </section>
       <section class="serial-panel" aria-labelledby="serial-heading"><div class="panel-title"><h3 id="serial-heading">SERIAL</h3><span class="serial-connection"><span class="status-dot connected"></span>connected / 115200</span></div>
-        <pre id="serial-output" class="serial-output${state.active.id > 1 ? " multiline" : ""}" aria-label="Received serial output">${state.active.id === 1 ? `<span aria-hidden="true">&gt; </span>${e(serialDisplay(machine.terminalOutput))}` : e(machine.terminalOutput)}</pre>
+        <pre id="serial-output" class="serial-output${state.active.id === 1 ? "" : " multiline"}" aria-label="Received serial output">${e(serialText(state))}</pre>
         <span class="serial-note">${e(serialNote)}</span>
       </section>
     </div>

@@ -8,8 +8,8 @@ The [development plan](06_development_plan.md) owns tasks and exit criteria. Thi
 | --- | --- | --- |
 | 1 — Shell and onboarding | Week 1 | Phases 0–2: deployed browser shell and Prologue; Episode 01 may still be unavailable |
 | 2 — First complete episode | Week 2 | Phase 3: Episode 01 vertical slice and playtest |
-| 3 — Diagnostic foundation | Weeks 3–4 | Phase 4: Episodes 02–05 |
-| 4 — Visible game-device behavior | Weeks 5–6 | Phase 5: Episodes 06–09 |
+| 3 — Diagnostic foundation | Weeks 3–4 | Phase 4: Episodes 02–04 |
+| 4 — Visible game-device behavior | Weeks 5–6 | Phase 5: Episodes 05–09 |
 | 5 — Performance bugs | Weeks 7–8 | Phase 6: Episodes 10–13 |
 | 6 — Bare-metal game | Weeks 9–10 | Phase 7: Episodes 14–17 |
 | 7 — OS foundations | Weeks 11–13 | Phase 8: Episodes 18–24 and runtime feasibility decision |

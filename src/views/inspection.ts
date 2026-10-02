@@ -1,7 +1,7 @@
 import { currentChapter, type AppState } from "../app-state";
 import { formatAddress, formatWord, WATCHED_RAM_ADDRESS } from "../sim/memory";
 import { mtimeCounter, timerTargetTicks } from "../sim/timer";
-import { MTIME_ADDRESS } from "../platform";
+import { BUTTON_ADDRESS, LED_ADDRESS, MTIME_ADDRESS } from "../platform";
 import { escapeHtml as e } from "./html";
 
 // A row is one 32-bit word. Addresses step by four because the store is a word store,
@@ -17,6 +17,10 @@ function ramRows(state: AppState): (WordRow | "gap")[] {
     "gap",
   ];
   if (state.active.id === 3) rows.push({ address: MTIME_ADDRESS, label: "mtime", note: "timer counter", id: "mtime-counter" });
+  if (state.active.id === 4 || state.active.id === 5) {
+    rows.push({ address: BUTTON_ADDRESS, label: "button", note: "read by the program", id: "button-value" });
+    rows.push({ address: LED_ADDRESS, label: "led", note: "written by the program", id: "led-value" });
+  }
   // A store outside the listed words appears here, so a wrong destination is never silent.
   if (state.active.id === 2) {
     const stored = state.active.machine.lastStore?.address;
@@ -30,6 +34,10 @@ function ramRows(state: AppState): (WordRow | "gap")[] {
 function ramValue(state: AppState, address: number): number {
   if (state.active.id === 2) return state.active.machine.cells[address] ?? 0;
   if (state.active.id === 3) return address === MTIME_ADDRESS ? mtimeCounter(state.active.machine, performance.now()) : 0;
+  if (state.active.id === 4 || state.active.id === 5) {
+    if (address === BUTTON_ADDRESS) return state.active.machine.buttonValue;
+    if (address === LED_ADDRESS) return state.active.machine.ledValue;
+  }
   return 0;
 }
 
@@ -40,7 +48,7 @@ function renderRamModule(state: AppState): string {
   ).join("")}</dl>`;
 }
 
-function renderCpuModule(state: AppState): string {
+function renderTimerCpu(state: AppState): string {
   if (state.active.id !== 3) return "";
   const machine = state.active.machine;
   const rows: [string, number, string?][] = [
@@ -53,6 +61,22 @@ function renderCpuModule(state: AppState): string {
   return `<dl class="register-table">${rows.map(([name, value, note]) =>
     `<div class="register-row"><dt>${e(name)}</dt><dd>${e(formatAddress(value))}</dd>${note ? `<span class="register-note">${e(note)}</span>` : ""}</div>`,
   ).join("")}</dl><p class="inspection-note">The program is still inside its wait loop, comparing MTIME against x6. x6 is the tick count the program asked for; MTIME is the count the hardware has actually produced.</p>`;
+}
+
+// Episode 05 has no interrupts yet, so the CPU counters are how the cost of polling
+// becomes visible. Loop passes and reads climb together while the machine is idle.
+function renderLoopCpu(state: AppState): string {
+  if (state.active.id !== 5) return "";
+  const machine = state.active.machine;
+  return `<dl class="register-table">
+    <div class="register-row"><dt>loop passes</dt><dd id="loop-passes">${machine.loopPasses.toLocaleString("en-US")}</dd><span class="register-note">the loop is running</span></div>
+    <div class="register-row"><dt>button reads</dt><dd id="button-reads">${machine.buttonReads.toLocaleString("en-US")}</dd><span class="register-note">what that cost</span></div>
+    <div class="register-row"><dt>heartbeat</dt><dd id="loop-heartbeat">${machine.heartbeat.toLocaleString("en-US")}</dd><span class="register-note">the second job</span></div>
+  </dl><p class="inspection-note">The loop has been turning the whole time. A read is what makes a pass cost something, so the read count is the CPU. Nothing has pressed the button.</p>`;
+}
+
+function renderCpuModule(state: AppState): string {
+  return state.active.id === 3 ? renderTimerCpu(state) : renderLoopCpu(state);
 }
 
 // The cover is an observation aid. It is never a completion gate, so an episode

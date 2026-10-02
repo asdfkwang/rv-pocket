@@ -7,7 +7,7 @@ This file records decisions and their rationale. The linked design documents own
 | D-001 | Start repair episodes with a malfunction or repair goal; the Prologue is onboarding | Knowledge answers a need created by the problem. [Product vision](01_product_vision.md#problem-first-design) |
 | D-002 | Keep explanations and quizzes in the Manual | Learning remains part of investigation; quiz completion does not gate repairs. [Learning design](04_learning_design.md#quiz-policy) |
 | D-003 | Expose hardware behavior before software abstraction | Build hardware understanding through observation. [Product vision](01_product_vision.md#hardware-before-software) |
-| D-004 | Put UART, RAM, timer, and input before display/pixel work | Build diagnostic confidence before visual complexity. [Roadmap](03_episode_roadmap.md) |
+| D-004 | Put UART, RAM, timer, and input before display/pixel work | Build diagnostic confidence before visual complexity. Episodes 01–04 run with the screen still black, so an input repair is observable through registers and indicators before any pixel work. [Roadmap](03_episode_roadmap.md) |
 | D-005 | Finish the bare-metal arc with a working game device | Repairs need a concrete combined payoff. [Roadmap](03_episode_roadmap.md#episode-12--the-quiet-game) |
 | D-006 | Revisit the same hardware under Linux | Drivers and OS abstractions solve already-familiar problems. [Learning design](04_learning_design.md#reuse-without-false-generalization) |
 | D-007 | Keep kernel contribution to a short simulated epilogue | Contribution mechanics are not the main game. [Product vision](01_product_vision.md#ending-and-epilogue) |

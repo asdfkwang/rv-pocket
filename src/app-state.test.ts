@@ -51,7 +51,9 @@ describe("episode navigation", () => {
     for (const [legacy, view] of [["workbench", "station"], ["computer", "pc"], ["terminal", "pc"], ["manual", "book"], ["ebook", "book"]] as const) {
       expect(parseRoute(`#chapter=01&view=${legacy}`).route.view).toBe(view as View);
     }
-    const unavailable = parseRoute("#episode=04&view=pc");
+    expect(parseRoute("#episode=04&view=station").route).toEqual({ chapterId: 4, view: "station" });
+    expect(parseRoute("#episode=05&view=station").route).toEqual({ chapterId: 5, view: "station" });
+    const unavailable = parseRoute("#episode=06&view=pc");
     expect(unavailable.route).toEqual({ chapterId: 0, view: "pc" });
     expect(unavailable.notice).not.toBe("");
   });

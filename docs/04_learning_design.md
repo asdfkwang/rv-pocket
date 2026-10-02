@@ -25,16 +25,20 @@ Quizzes and episodes are open-book/open-web by design. A player who cannot recal
 | Game episode | What the player works with | What remains deferred |
 | --- | --- | --- |
 | 01 | CPU/RAM/UART roles and one guided transmit request | SoC internals, address math, CPU instruction execution |
-| 02–04 | RAM addresses/data, a named timer control, input polling and basic MMIO | CPU registers, PC, assembly handlers |
-| 05 | Notification, pause, handle event, resume interrupted work | Implementation of saving/restoring context, stack, trap CSRs |
-| 06 | Memory map and display control with a simple test pattern | Detailed pixel math |
-| 07–09 | CPU registers, PC, arithmetic, load/store, branches | Trap/CSR internals |
-| 14–15 | Calls/stack, followed by fault diagnosis, saved PC and trap CSR introduction | Full interrupt-controller configuration |
-| 19 | Interrupt internals and controller state using earlier CPU/trap knowledge | No new early-episode prerequisite |
+| 02–03 | RAM addresses/data and a named timer control | CPU registers, PC, assembly handlers |
+| 04 | Input polling and basic MMIO read/write through a button and an LED | CPU registers, PC, assembly handlers |
+| 05 | When work runs: an unconditional loop versus waiting for a change | Trap/CSR internals, interrupt controller setup |
+| 06–07 | Display control and memory map with a simple test pattern, then pixel math | Trap/CSR internals |
+| 08 | Notification, pause, handle event, resume interrupted work | Implementation of saving/restoring context, stack, trap CSRs |
+| 09–10 | CPU registers, PC, arithmetic, load/store, branches | Trap/CSR internals |
+| 15–16 | Calls/stack, followed by fault diagnosis, saved PC and trap CSR introduction | Full interrupt-controller configuration |
+| 20 | Interrupt internals and controller state using earlier CPU/trap knowledge | No new early-episode prerequisite |
 
-The [roadmap](03_episode_roadmap.md) owns episode numbers and repair details. Device registers in early MMIO episodes are peripheral control/status locations; they are not the CPU register file taught in Episode 07.
+The [roadmap](03_episode_roadmap.md) owns episode numbers and repair details. Device registers in early MMIO episodes are peripheral control/status locations; they are not the CPU register file taught in Episode 09.
 
-For Episode 05, “save/return” means that interrupted work resumes correctly. Use a supplied event/handler/resume model. Do not require an assembly prologue, PC calculation, CSR manipulation, or trap-return instruction to complete that early repair.
+For Episode 08, “save/return” means that interrupted work resumes correctly. Use a supplied event/handler/resume model. Do not require an assembly prologue, PC calculation, CSR manipulation, or trap-return instruction to complete that early repair.
+
+Episode 05 names the concept as polling cost, not as an interrupt. The player learns that re-reading a register forever is real work with a real cost, and that waiting for change is a decision the program can make on its own. The interrupt controller is still deferred to Episode 20.
 
 ## Interaction progression
 

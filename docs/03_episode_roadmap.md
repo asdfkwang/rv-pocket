@@ -66,9 +66,31 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## 04–07: A first manipulable device
+## 04–08: A first manipulable device
 
-### Episode 04 — Black Screen First
+Input comes before display. The buttons and LEDs exist while the screen is still black, so a repair here is observable through registers and indicators without pixel work, and the screen only has to answer for itself once the device already responds to being touched. This follows [D-004](11_decision_log.md) and the prerequisite order in the [learning design](04_learning_design.md#prerequisite-boundaries).
+
+### Episode 04 — Button → LED
+
+- **증상:** Nothing on the Pocket answers a touch. Hold the A button and the LED stays dark.
+- **실제 원인:** The installed program reads the button register but never writes the LED register, so the machine reports an input and does nothing with it.
+- **관찰 가능한 증거:** The A button on the station toggles the LED indicator. Under OPEN COVER the RAM module shows the button register going to `0x00000001` on press, while the LED register stays at `0x00000000`. The hardware is answering; the program is what is missing.
+- **시험할 가설:** The button is dead / the program never reads it / the program never writes the output.
+- **수정할 대상:** The order of the blocks in `button.c`: read the button, test its bit, then write the LED in each branch. Any order installs; the wrong one misbehaves.
+- **성공 판정:** Hold the A button and the LED turns on; let go and it turns off. The repair is judged on a real press and release, so configuring the program without touching the device does not finish it.
+- **다음 문제와의 연결:** This is the first complete input → CPU → output program. The player has seen an MMIO read, an MMIO write, a bit test, and a polling loop, which is what Episode 05 takes apart.
+
+### Episode 05 — The Busy Loop
+
+- **증상:** Episode 04's program still works, and the LED still follows the button. But the program never gets to do anything else: the only thing that ever runs is the button check. A second job added below the loop body never executes.
+- **실제 원인:** Polling owns the CPU. The program re-reads the button thousands of times per second and every one of those passes is a decision to do nothing, so no other work is ever reached.
+- **관찰 가능한 증거:** A loop-pass counter in the cover's CPU module climbs continuously, and a read count on the button register climbs with it. The counter does not stop between presses, which is the point: the reads were never caused by input.
+- **시험할 가설:** The program crashed / the second job is placed outside the loop / the loop is spinning with nothing to do.
+- **수정할 대상:** How often the program checks the button. The supplied loop re-reads it every pass. The repair is to let the loop wait for a change before doing the work again.
+- **성공 판정:** Both the button check and the second job run, the LED still follows a press, and the loop-pass counter stops climbing while the button is held down. Polling is not removed — it is the *unconditional* spin that is the defect, so the fix is a wait for change rather than a delete of the read.
+- **다음 문제와의 연결:** Deciding when to run work instead of running it always is the same question an interrupt answers in hardware. State-vs-change thinking returns here and in Episode 08.
+
+### Episode 06 — Black Screen First
 
 - **증상:** Only a black screen; nothing was ever initialized.
 - **실제 원인:** The display initialization order is wrong.
@@ -78,7 +100,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The display initializes and shows output.
 - **다음 문제와의 연결:** A live screen makes position and movement problems visible.
 
-### Episode 05 — Off the Screen
+### Episode 07 — Off the Screen
 
 - **증상:** A marker or status block renders outside the visible screen.
 - **실제 원인:** A coordinate/address calculation error.
@@ -88,17 +110,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The marker appears where intended.
 - **다음 문제와의 연결:** Correct addressing is reused for sprites, buffers, and DMA targets.
 
-### Episode 06 — One Press, Endless Move
-
-- **증상:** One button press keeps moving the target forever.
-- **실제 원인:** The code reacts to input *state* instead of input *change*.
-- **관찰 가능한 증거:** Button state trace vs. movement log; press-and-hold vs. single-press behavior.
-- **시험할 가설:** The button is stuck / the handler never sees release.
-- **수정할 대상:** The input handling: detect change, not level.
-- **성공 판정:** One press moves exactly once.
-- **다음 문제와의 연결:** State-vs-change thinking returns in interrupts and event waiting.
-
-### Episode 07 — Frozen While Waiting
+### Episode 08 — Frozen While Waiting
 
 - **증상:** While waiting for input, the screen and diagnostics stop.
 - **실제 원인:** A blocking wait holds the whole loop.
@@ -110,9 +122,9 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## 08–12: A demo worth using
+## 09–13: A demo worth using
 
-### Episode 08 — CPU-Bound Copy
+### Episode 09 — CPU-Bound Copy
 
 - **증상:** Screen copies hold the CPU; nothing else progresses during transfers.
 - **실제 원인:** The CPU copies every byte itself instead of handing the transfer off.
@@ -122,7 +134,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The copy completes without holding the CPU.
 - **다음 문제와의 연결:** DMA introduces buffer ownership questions.
 
-### Episode 09 — Old Frames
+### Episode 10 — Old Frames
 
 - **증상:** Faster now, but previous frames sometimes show.
 - **실제 원인:** Stale cache/buffer contents reach the display; ownership of the buffer is untracked.
@@ -132,7 +144,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The display consistently shows current data.
 - **다음 문제와의 연결:** Coherency discipline is reused for device buffers under Linux.
 
-### Episode 10 — Vanishing Transfer Bug
+### Episode 11 — Vanishing Transfer Bug
 
 - **증상:** A transfer error disappears as soon as logging is added.
 - **실제 원인:** An access-ordering problem; observation changes timing enough to hide it.
@@ -142,7 +154,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Transfers succeed deterministically, with or without logging.
 - **다음 문제와의 연결:** Ordering discipline is reused for calls, stacks, and device startup.
 
-### Episode 11 — Broken Return
+### Episode 12 — Broken Return
 
 - **증상:** One specific restart path breaks function returns.
 - **실제 원인:** Call state and the stack are not tracked across that path.
@@ -152,7 +164,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** All restart paths return correctly.
 - **다음 문제와의 연결:** Call/stack discipline supports traps, firmware handoff, and context switches.
 
-### Episode 12 — The Quiet Game
+### Episode 13 — The Quiet Game
 
 - **증상:** The demo runs but has no audio, and the pieces have never run as one game.
 - **실제 원인:** Leftover audio initialization was never restored; integration was never attempted.
@@ -164,9 +176,9 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## 13–15: To Linux without the development PC
+## 14–16: To Linux without the development PC
 
-### Episode 13 — Won't Boot Untethered
+### Episode 14 — Won't Boot Untethered
 
 - **증상:** With the debugger detached, the device does not boot.
 - **실제 원인:** Initialization the development tools performed silently was never moved into the boot process.
@@ -176,7 +188,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The device boots with no debugger attached.
 - **다음 문제와의 연결:** An autonomous boot is the prerequisite for firmware handoff.
 
-### Episode 14 — Stuck at Handoff
+### Episode 15 — Stuck at Handoff
 
 - **증상:** Firmware runs, then everything stops at the handoff to the kernel.
 - **실제 원인:** The handoff conditions the kernel requires are not met.
@@ -186,7 +198,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Control visibly transfers into the kernel.
 - **다음 문제와의 연결:** A clean handoff is what later Device Tree and boot-arg problems build on.
 
-### Episode 15 — No Shell
+### Episode 16 — No Shell
 
 - **증상:** Kernel logs appear, but the boot never reaches a shell.
 - **실제 원인:** Hardware description, boot arguments, or the root filesystem connection is wrong.
@@ -198,9 +210,9 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## 16–21: Integration problems under Linux
+## 17–22: Integration problems under Linux
 
-### Episode 16 — Unbound Display
+### Episode 17 — Unbound Display
 
 - **증상:** Linux boots, but the screen is black again: no driver is bound to the display device.
 - **실제 원인:** Driver-device matching fails for the display.
@@ -210,7 +222,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Linux drives the display.
 - **다음 문제와의 연결:** Binding is the pattern reused for input and audio.
 
-### Episode 17 — Endless Interrupts
+### Episode 18 — Endless Interrupts
 
 - **증상:** One button press fires interrupts forever.
 - **실제 원인:** The interrupt source is never acknowledged or cleared.
@@ -220,7 +232,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** One press produces a bounded interrupt sequence.
 - **다음 문제와의 연결:** Clean interrupt handling is required before blocking waits can work.
 
-### Episode 18 — Unresponsive While Waiting
+### Episode 19 — Unresponsive While Waiting
 
 - **증상:** While waiting for the device, whole-system responsiveness collapses.
 - **실제 원인:** The wait blocks instead of sleeping for the event.
@@ -230,7 +242,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** The system stays responsive during device waits.
 - **다음 문제와의 연결:** Proper waiting is what later sleep/wakeup mechanisms formalize.
 
-### Episode 19 — Wrong Address Kind to DMA
+### Episode 20 — Wrong Address Kind to DMA
 
 - **증상:** Screen data is corrupted when DMA is involved.
 - **실제 원인:** DMA is handed the wrong kind of address for the buffer.
@@ -240,7 +252,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** DMA-transferred screen data is intact.
 - **다음 문제와의 연결:** Address-kind discipline returns in storage and userspace mapping.
 
-### Episode 20 — Freed Memory Touched
+### Episode 21 — Freed Memory Touched
 
 - **증상:** Right after the game exits, an in-flight transfer touches released memory.
 - **실제 원인:** Lifetime is unmanaged: the transfer outlives its buffer.
@@ -250,7 +262,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Exit never touches released memory.
 - **다음 문제와의 연결:** Lifetime thinking is reused for process and driver teardown.
 
-### Episode 21 — Sleeper Never Wakes
+### Episode 22 — Sleeper Never Wakes
 
 - **증상:** The event fires, but the waiting program never wakes.
 - **실제 원인:** The wakeup path between event and waiter is broken.
@@ -262,9 +274,9 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## 22–25: Tying the finished product
+## 23–26: Tying the finished product
 
-### Episode 22 — Sound Gone After Reboot
+### Episode 23 — Sound Gone After Reboot
 
 - **증상:** Sound works until reboot, then disappears.
 - **실제 원인:** Linux device initialization and resource management skip the audio setup.
@@ -274,7 +286,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Sound survives reboot.
 - **다음 문제와의 연결:** Managed initialization is the pattern storage must follow too.
 
-### Episode 23 — Storage That Forgets
+### Episode 24 — Storage That Forgets
 
 - **증상:** A save reports success but is gone after reboot.
 - **실제 원인:** The write never reaches the real storage path.
@@ -284,7 +296,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** Saved data survives reboot.
 - **다음 문제와의 연결:** A verified storage path is required for a reproducible image.
 
-### Episode 24 — Clean Image Won't Boot
+### Episode 25 — Clean Image Won't Boot
 
 - **증상:** Everything works in the development environment, but a fresh image does not boot.
 - **실제 원인:** Missing components and packaging dependencies that the dev environment silently provided.
@@ -294,7 +306,7 @@ The game opening. Understand what was left behind and learn the interface.
 - **성공 판정:** A clean image boots.
 - **다음 문제와의 연결:** A reproducible image is what the final regression gate tests.
 
-### Episode 25 — Regression Gate
+### Episode 26 — Regression Gate
 
 - **증상:** No single check proves the device is finished.
 - **실제 원인:** Cold boot, repeated runs, input, display, audio, and storage were never verified together.
@@ -306,7 +318,7 @@ The game opening. Understand what was left behind and learn the interface.
 
 ---
 
-## Episode 26 — Epilogue: One Last Patch
+## Episode 27 — Epilogue: One Last Patch
 
 - **증상:** One small driver problem remains, unexplained.
 - **실제 원인:** A constrained, realistic driver bug.

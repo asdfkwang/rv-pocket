@@ -2,11 +2,13 @@ import { viewLabel, chapters, createAppState, currentChapter, missionComplete, n
 import { getLang, t, toggleLang } from "./i18n";
 import { chapterMission, chapterTitle } from "./chapters/locale";
 import { renderStation } from "./views/station";
-import { renderPc, sourceStatus, stationSerialSummary } from "./views/pc";
+import { renderPc, sourceStatus, stationSerialSummary, editorFileName } from "./views/pc";
 import { renderPocket } from "./views/pocket";
 import { flashFirmware, formatByte, parseByte, rebootTarget, serialDisplay } from "./sim/uart";
 import { flashMemoryFirmware, formatAddress, formatWord, readStoreAddress, rebootMemoryTarget, WATCHED_RAM_ADDRESS } from "./sim/memory";
 import { flashTimerFirmware, formatFrequency, formatInterval, mtimeCounter, parseTimebase, rebootTimerTarget, recordTimerTick, timerIntervalMs, timerTargetTicks } from "./sim/timer";
+import { flashInputProgram, pollInput } from "./sim/input";
+import { flashLoopProgram, LOOP_PASSES_PER_SECOND, pollLoop, tickLoop } from "./sim/loop";
 import { renderMissionStatus, renderSuccess } from "./views/mission";
 import { renderDatasheet } from "./views/datasheet";
 import { DATASHEET_SECTIONS } from "./datasheet-content";
@@ -33,6 +35,9 @@ let timerTimeout: number | undefined;
 let timerLedTimeout: number | undefined;
 let timerAttempt = 0;
 let mtimeTicker: number | undefined;
+let loopTicker: number | undefined;
+const LOOP_TICK_MS = 100;
+const LOOP_TICK_PASSES = LOOP_PASSES_PER_SECOND * LOOP_TICK_MS / 1000;
 
 function canonicalizeRoute() {
   const hash = routeHash({ chapterId: state.active.id, view: state.view });
@@ -85,6 +90,7 @@ function render() {
   else if (focusId) document.getElementById("mission-title")?.focus({ preventScroll: true });
   if (!state.ui.introDismissed) document.getElementById("got-it")?.focus();
   syncMtimeTicker();
+  syncLoopTicker();
 }
 
 function announce(message: string) { announcement.textContent = message; }
@@ -109,6 +115,91 @@ function syncMtimeTicker() {
 function stopMtimeTicker() {
   window.clearInterval(mtimeTicker);
   mtimeTicker = undefined;
+}
+
+// Episode 05's loop turns on its own, whether or not anyone touches the machine. The
+// tick advances the counters and patches their text; it never redraws the page, so the
+// cover, the editor, and the BOOK's reading state are all left alone.
+function syncLoopTicker() {
+  const wanted = state.active.id === 5 && !state.ui.introDismissed;
+  if (wanted && loopTicker === undefined) {
+    loopTicker = window.setInterval(() => {
+      if (state.active.id !== 5) return;
+      state.active.machine = tickLoop(state.active.machine, LOOP_TICK_PASSES);
+      refreshLoopCounters();
+    }, LOOP_TICK_MS);
+  } else if (!wanted && loopTicker !== undefined) {
+    window.clearInterval(loopTicker);
+    loopTicker = undefined;
+  }
+}
+
+function stopLoopTicker() {
+  window.clearInterval(loopTicker);
+  loopTicker = undefined;
+}
+
+function refreshLoopCounters() {
+  if (state.active.id !== 5) return;
+  const machine = state.active.machine;
+  const passes = document.getElementById("loop-passes");
+  if (passes) passes.textContent = machine.loopPasses.toLocaleString("en-US");
+  const reads = document.getElementById("button-reads");
+  if (reads) reads.textContent = machine.buttonReads.toLocaleString("en-US");
+  const beat = document.getElementById("loop-heartbeat");
+  if (beat) beat.textContent = machine.heartbeat.toLocaleString("en-US");
+  const buttonValue = document.getElementById("button-value");
+  if (buttonValue) buttonValue.textContent = formatWord(machine.buttonValue);
+  const ledValue = document.getElementById("led-value");
+  if (ledValue) ledValue.textContent = formatWord(machine.ledValue);
+  document.querySelectorAll(".led-light").forEach((light) => light.classList.toggle("on", machine.ledValue === 1));
+  const preview = document.getElementById("station-serial");
+  if (preview) preview.textContent = stationSerialSummary(state);
+  const ledStatus = document.getElementById("pocket-led-status");
+  if (ledStatus) ledStatus.textContent = machine.ledValue ? "on" : "off";
+  const buttonStatus = document.getElementById("pocket-button-status");
+  if (buttonStatus) buttonStatus.textContent = machine.buttonValue ? "pressed" : "released";
+  if (missionComplete(state)) {
+    const success = document.getElementById("mission-success");
+    if (success) success.innerHTML = renderSuccess(state);
+  }
+}
+
+// The A button is a real hold. Pressing runs one polling pass, which is what the
+// program's while(1) would notice, and the LED follows from that pass alone.
+function setButton(held: boolean) {
+  if ((state.active.id !== 4 && state.active.id !== 5) || state.ui.buttonHeld === held) return;
+  state.ui.buttonHeld = held;
+  const wasComplete = missionComplete(state);
+  const pressed = held ? 1 : 0;
+  state.active.machine = state.active.id === 4
+    ? pollInput(state.active.machine, pressed)
+    : pollLoop(state.active.machine, pressed);
+  const complete = missionComplete(state);
+  if (complete && !wasComplete) announce(currentChapter(state).mission.successMessage);
+  else if (state.active.id === 4) announce(held
+    ? state.active.machine.ledValue ? "Button pressed. The LED is on." : "Button pressed. The LED did not change."
+    : `Button released. The LED is ${state.active.machine.ledValue ? "still on" : "off"}.`);
+}
+
+function refreshInputObservation() {
+  if (state.active.id !== 4 && state.active.id !== 5) return;
+  const machine = state.active.machine;
+  const buttonValue = document.getElementById("button-value");
+  if (buttonValue) buttonValue.textContent = formatWord(machine.buttonValue);
+  const ledValue = document.getElementById("led-value");
+  if (ledValue) ledValue.textContent = formatWord(machine.ledValue);
+  document.querySelectorAll(".led-light").forEach((light) => light.classList.toggle("on", machine.ledValue === 1));
+  const status = document.getElementById("station-serial");
+  if (status) status.textContent = stationSerialSummary(state);
+  const ledStatus = document.getElementById("pocket-led-status");
+  if (ledStatus) ledStatus.textContent = machine.ledValue ? "on" : "off";
+  const buttonStatus = document.getElementById("pocket-button-status");
+  if (buttonStatus) buttonStatus.textContent = machine.buttonValue ? "pressed" : "released";
+  const strip = document.getElementById("mission-status");
+  if (strip) strip.innerHTML = renderMissionStatus(state);
+  const success = document.getElementById("mission-success");
+  if (success) success.innerHTML = renderSuccess(state);
 }
 
 function refreshLights() {
@@ -191,14 +282,17 @@ function pulseTx() {
 async function buildAndFlash() {
   if (state.active.id === 0 || state.ui.buildPhase !== "idle") return;
   const chapterId = state.active.id;
-  const fileName = currentChapter(state).computer.source!.fileName;
-  const binaryName = fileName.replace(/\.S$/, ".bin");
+  const fileName = editorFileName(state);
+  const binaryName = fileName.replace(/\.[cS]$/, ".bin");
   const byte = parseByte(state.ui.draftByte);
   const store = readStoreAddress(state.ui.draftStoreAddress);
   const timebase = parseTimebase(state.ui.draftTimebase);
+  const program = currentChapter(state).computer.program;
   const error = chapterId === 1 && byte === null ? "Enter one hex byte from 0x00 to 0xFF."
     : chapterId === 2 ? store.error
-    : chapterId === 3 && timebase === null ? "Choose a supported program timebase." : "";
+    : chapterId === 3 && timebase === null ? "Choose a supported program timebase."
+    : chapterId === 4 && program!.blocks.some((block) => !state.ui.draftBlocks.includes(block.id))
+      ? "Place every block before building." : "";
   if (error) {
     state.ui.feedback = `Build stopped. ${error} The running firmware is unchanged.`;
     render();
@@ -207,6 +301,7 @@ async function buildAndFlash() {
     return;
   }
   if (chapterId === 3) stopTimer();
+  if (chapterId === 4 || chapterId === 5) state.ui.buttonHeld = false;
   const attempt = ++buildAttempt;
   const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
   state.ui.feedback = "";
@@ -238,13 +333,22 @@ async function buildAndFlash() {
     state.ui.feedback = missionComplete(state)
       ? `RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} and nothing was transmitted. Watch the value under OPEN COVER.`
       : `The store went to ${formatAddress(store.address!)}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is still empty. Compare the destination with the Memory Map in DATASHEET.`;
-  } else {
+  } else if (state.active.id === 3) {
     state.active.machine = rebootTimerTarget(flashTimerFirmware(state.active.machine, timebase!));
     state.ui.feedback = `Program timebase installed: ${formatFrequency(timebase!)}. The program now waits ${timerTargetTicks(timebase!).toLocaleString("en-US")} ticks. Observe two ticks; the hardware timer stays at 1 GHz.`;
+  } else if (state.active.id === 5) {
+    state.active.machine = flashLoopProgram(state.active.machine, state.ui.draftBlocks);
+    state.ui.feedback = state.active.machine.installedBlocks[0] === "wait"
+      ? "loop.c installed. Open the cover on CPU and watch the read count while the button stays untouched."
+      : "loop.c installed. The loop still asks about the button on every pass. Compare the read count with the pass count.";
+  } else {
+    state.active.machine = flashInputProgram(state.active.machine, state.ui.draftBlocks);
+    state.ui.feedback = `button.c installed with ${state.ui.draftBlocks.length} blocks. Hold the A button on the station and watch the LED.`;
   }
   state.ui.buildPhase = "idle";
   state.ui.buildLog.push("✓ Pocket booted");
   if (state.active.id === 3) { render(); startTimer(); }
+  else if (state.active.id === 4 || state.active.id === 5) render();
   else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
   announce(state.ui.feedback);
@@ -267,12 +371,21 @@ function resetTarget() {
     state.ui.feedback = missionComplete(state)
       ? `Pocket reset. RAM PASS. The store reached ${formatAddress(WATCHED_RAM_ADDRESS)} again, and nothing was transmitted.`
       : `Pocket reset. The installed program stored to ${store ? formatAddress(store.address) : "an unknown address"}. The target word at ${formatAddress(WATCHED_RAM_ADDRESS)} is unchanged.`;
-  } else {
+  } else if (state.active.id === 3) {
     stopTimer();
     state.active.machine = rebootTimerTarget(state.active.machine);
     state.ui.feedback = `Pocket reset. The diagnostic uses the installed ${formatFrequency(state.active.machine.timebaseHz)} program timebase; the hardware timer runs at 1 GHz.`;
+  } else if (state.active.id === 5) {
+    state.ui.buttonHeld = false;
+    state.active.machine = pollLoop(state.active.machine, 0);
+    state.ui.feedback = "Pocket reset. The installed loop is running again. Watch the read count on the cover.";
+  } else {
+    state.ui.buttonHeld = false;
+    state.active.machine = pollInput(state.active.machine, 0);
+    state.ui.feedback = "Pocket reset. The installed program ran again. Hold the A button and watch the LED.";
   }
   if (state.active.id === 3) { render(); startTimer(); }
+  else if (state.active.id === 4 || state.active.id === 5) render();
   else if (state.active.id === 2 && !sentOnThisRun()) render();
   else pulseTx();
   announce(state.ui.feedback);
@@ -313,7 +426,7 @@ window.addEventListener("hashchange", () => {
     return;
   }
   const parsed = parseRoute(location.hash);
-  if (parsed.route.chapterId !== state.active.id) { buildAttempt++; stopTimer(); }
+  if (parsed.route.chapterId !== state.active.id) { buildAttempt++; stopTimer(); stopLoopTicker(); }
   state = navigate(state, parsed.route);
   routeNotice = parsed.notice;
   canonicalizeRoute();
@@ -356,6 +469,19 @@ app.addEventListener("click", (event) => {
       state.ui.coverModule = module;
       render();
       announce(`${module.toUpperCase()} module.`);
+      return;
+    }
+    case "block-add":
+    case "block-remove": {
+      const program = currentChapter(state).computer.program;
+      const id = button.dataset.block;
+      if (!program || !id || state.ui.buildPhase !== "idle") return;
+      state.ui.draftBlocks = button.dataset.action === "block-add"
+        ? [...state.ui.draftBlocks, id]
+        : state.ui.draftBlocks.filter((block) => block !== id);
+      render();
+      const status = document.getElementById("source-status");
+      if (status) status.textContent = sourceStatus(state);
       return;
     }
     case "next-episode": {
@@ -454,6 +580,7 @@ app.addEventListener("click", (event) => {
     case "reset":
       buildAttempt++;
       stopTimer();
+      stopLoopTicker();
       state = resetMission(state);
       state.ui.feedback = t("resetFeedback");
       break;
@@ -466,7 +593,7 @@ app.addEventListener("click", (event) => {
 app.addEventListener("change", (event) => {
   const target = event.target;
   if (target instanceof HTMLSelectElement && target.id === "chapter-select") {
-    if (["0", "1", "2", "3"].includes(target.value)) goTo(Number(target.value) as ChapterId, state.view);
+    if (["0", "1", "2", "3", "4", "5"].includes(target.value)) goTo(Number(target.value) as ChapterId, state.view);
   } else if (target instanceof HTMLSelectElement && target.id === "timebase-frequency" && state.active.id === 3 && state.ui.buildPhase === "idle") {
     const timebase = parseTimebase(target.value);
     if (timebase === null) return;
@@ -520,8 +647,43 @@ document.querySelector<HTMLAnchorElement>(".skip-link")?.addEventListener("click
   main?.scrollIntoView({ block: "start" });
 });
 
+// The A button is a hold, not a click. Pointer and keyboard both press and release,
+// and losing focus or leaving the page releases too, so the machine is never stuck down.
+function isHoldTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.dataset.hold === "a";
+}
+
+for (const type of ["pointerdown", "keydown"] as const) {
+  app.addEventListener(type, (event) => {
+    if (!isHoldTarget(event.target)) return;
+    if (type === "keydown" && event instanceof KeyboardEvent && event.repeat) return;
+    event.preventDefault();
+    setButton(true);
+    renderPocketButton();
+  });
+}
+for (const type of ["pointerup", "keyup", "pointercancel", "blur"] as const) {
+  app.addEventListener(type, (event) => {
+    if (type === "blur" ? !state.ui.buttonHeld : !isHoldTarget(event.target)) return;
+    setButton(false);
+    renderPocketButton();
+  });
+}
+
+// A full render would drop the focus the player is holding, so the press only
+// patches the light and the readout around it.
+function renderPocketButton() {
+  if (state.active.id !== 4) return;
+  const button = document.getElementById("pocket-button-a");
+  if (button instanceof HTMLButtonElement) {
+    button.classList.toggle("pressed", state.ui.buttonHeld);
+    button.setAttribute("aria-pressed", String(state.ui.buttonHeld));
+  }
+  refreshInputObservation();
+}
+
 canonicalizeRoute();
 render();
-window.addEventListener("pagehide", () => { stopTimer(); stopMtimeTicker(); });
+window.addEventListener("pagehide", () => { stopTimer(); stopMtimeTicker(); stopLoopTicker(); setButton(false); });
 window.addEventListener("pageshow", startTimer);
 if (routeNotice) announce(routeNotice);

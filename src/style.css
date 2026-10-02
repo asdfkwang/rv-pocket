@@ -171,6 +171,8 @@ main:focus { outline: none; }
 .pocket-object { width: 100%; }
 .pocket-object .object-label { display: block; }
 .pocket-object .object-label > span { display: block; margin-top: 5px; }
+.pocket-inspect-link { display: block; width: 100%; margin-top: 14px; padding: 0; background: none; border: 0; color: inherit; font: 700 0.8rem ui-monospace, monospace; text-align: left; cursor: pointer; }
+.pocket-inspect-link:hover { color: var(--accent); }
 .cover-toggle { display: block; width: 100%; margin-top: 14px; padding: 10px; background: #6d7361; color: #f2f0e4; border: 1px solid #4a5041; border-radius: 3px; font: 700 0.7rem ui-monospace, monospace; letter-spacing: 0.08em; cursor: pointer; box-shadow: 0 3px 0 #4a5041; }
 .cover-toggle:hover { background: #7b8269; }
 .cover-toggle.open { background: #37412f; }
@@ -185,7 +187,13 @@ main:focus { outline: none; }
 .dpad { font: 700 2.6rem ui-monospace, monospace; line-height: 1; color: #495040; }
 .speaker { color: #858776; font-size: 0.7rem; letter-spacing: 2px; }
 .game-buttons { display: flex; gap: 8px; }
-.game-buttons > span { display: grid; place-items: center; width: 24px; height: 24px; background: #4d5546; color: #eeeede; border-radius: 50%; font: 0.6rem ui-monospace, monospace; }
+.game-buttons > span, .pocket-button { display: grid; place-items: center; width: 24px; height: 24px; background: #4d5546; color: #eeeede; border-radius: 50%; font: 0.6rem ui-monospace, monospace; }
+.pocket-button { border: 1px solid #3c4436; }
+button.pocket-button { cursor: pointer; touch-action: none; -webkit-user-select: none; user-select: none; }
+button.pocket-button:hover { background: #5a6353; }
+button.pocket-button.pressed, button.pocket-button:active { background: #8fa87c; color: #232a1f; box-shadow: inset 0 2px 4px #2c3327; }
+button.pocket-button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.status-dot.led-light.on { background: #7ee08a; box-shadow: 0 0 10px #5cc46b; }
 .device-bottom { font: 0.55rem ui-monospace, monospace; color: #646b5b; margin-top: 18px; }
 .desk-cable { grid-area: cable; display: flex; align-items: center; padding: 0 24%; gap: 0; }
 .cable-end { width: 8px; height: 12px; background: #626957; border-radius: 2px; flex-shrink: 0; }
@@ -226,6 +234,14 @@ main:focus { outline: none; }
 .byte-input.address-input { width: 12ch; }
 .byte-input[aria-invalid="true"] { border-color: #d97a5a; }
 .byte-input:disabled { opacity: 0.6; }
+.program-lines .source-line code { white-space: pre; }
+.block-remove { margin-left: 10px; padding: 1px 7px; background: #3a3220; color: #dda3a3; border: 1px solid #7a5a4a; border-radius: 3px; font: 0.7rem ui-monospace, monospace; cursor: pointer; }
+.block-remove:hover:not(:disabled) { background: #4a3c28; }
+.block-palette { display: flex; flex-direction: column; gap: 6px; margin-top: 20px; padding-top: 16px; border-top: 1px dashed #3f4c3e; }
+.block-chip { text-align: left; padding: 8px 10px; background: #22301f; color: #cfe0c4; border: 1px solid #4a6340; border-radius: 3px; font: 0.8rem ui-monospace, monospace; cursor: pointer; }
+.block-chip:hover:not(:disabled) { background: #2b3b27; border-color: #7ba068; }
+.block-chip:disabled { opacity: 0.35; cursor: default; }
+.block-chip code { font: inherit; }
 .source-status { color: #a4b09e; font: 0.7rem ui-monospace, monospace; margin: 28px 0 0; }
 .diagnostic-controls { margin: 28px 0 0; padding: 16px; border: 1px solid #566951; max-width: 370px; }
 .diagnostic-controls legend { color: #b2c6a8; font: 0.7rem ui-monospace, monospace; letter-spacing: 0.08em; padding: 0 6px; }
@@ -250,6 +266,7 @@ main:focus { outline: none; }
 .word-note, .register-note { color: var(--muted); font-size: 0.65rem; }
 .word-row.target, .word-row.program { background: #f3f0dd; border-left-color: #c9a54a; }
 .word-row.mtime { background: #e4ecdc; border-left-color: #668257; }
+.word-row.button, .word-row.led { background: #dfe6f0; border-left-color: #4b6b96; }
 .word-gap { color: var(--muted); padding: 2px 8px; letter-spacing: 0.2em; }
 .inspection-note { font-size: 0.65rem; line-height: 1.7; color: var(--muted); margin: 14px 0 0; max-width: 68ch; }
 .pc-observation { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--ink); }

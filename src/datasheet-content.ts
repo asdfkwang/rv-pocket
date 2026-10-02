@@ -1,6 +1,6 @@
 import { UART_TX_ADDRESS } from "./sim/uart";
 import { WATCHED_RAM_ADDRESS, INITIAL_STORE_ADDRESS, formatWord, formatWordBytes } from "./sim/memory";
-import { formatAddress, MTIMECMP_ADDRESS, PLATFORM_MEMORY_MAP, TIMER_FREQUENCY_HZ, UART1_IRQ } from "./platform";
+import { BUTTON_ADDRESS, formatAddress, GPIO_IRQ, LED_ADDRESS, MTIMECMP_ADDRESS, PLATFORM_MEMORY_MAP, TIMER_FREQUENCY_HZ, UART1_IRQ } from "./platform";
 import { TIMER_ADDRESS } from "./sim/timer";
 
 // RV Pocket's Atlantis-inspired hardware reference, separate from the study book.
@@ -55,6 +55,23 @@ export const DATASHEET_SECTIONS = [
     columns: ["Character", "Hex byte", "Decimal"],
     rows: [["A", "0x41", "65"], ["B", "0x42", "66"]],
     notes: ["To send a different character, change the byte in boot.S and use Build & Flash. Reset reruns the firmware already installed on the Pocket."],
+  },
+  {
+    id: "gpio",
+    title: "GPIO",
+    summary: "The GPIO block holds the Pocket's A button and its LED. Both are memory-mapped, so they are read and written like RAM.",
+    columns: ["Register", "Address", "Access", "Behavior"],
+    rows: [
+      ["BUTTON", formatAddress(BUTTON_ADDRESS), "Read / 32-bit", "Bit 0 set while A is held / 0x00000001"],
+      ["LED", formatAddress(LED_ADDRESS), "Write / 32-bit", "Bit 0 drives the LED / 1 on, 0 off"],
+    ],
+    notes: [
+      "The Pocket's TTL GPIO sits in the gap between I2C4 and UART1. Atlantis's QEMU model has no GPIO, so these two registers are RV Pocket's own.",
+      "One register can carry several states as separate bits, which is why the program tests a bit rather than the whole word.",
+      "Both registers appear as rows in the RAM module under OPEN COVER, the same way MTIME does in Episode 03. They are not a module of their own.",
+      `GPIO IRQ = ${GPIO_IRQ}. Episode 04's program polls the button register on every pass of its loop. Episode 05 shows what that costs and what waiting for a change saves. The interrupt itself is still a later episode.`,
+      "A read tells the CPU what the hardware is doing. A write tells the hardware what to do. Nothing else moves the LED.",
+    ],
   },
   {
     id: "timer",

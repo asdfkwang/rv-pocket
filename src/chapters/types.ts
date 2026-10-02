@@ -12,6 +12,15 @@ export interface GuidedSource {
   lines: readonly { before: string; field?: "byte" | "store-address" | "target-ticks"; after?: string }[];
 }
 
+// A program is assembled from blocks rather than typed. The skeleton is fixed and the
+// player chooses the order, so the repair is the order without a C parser.
+export interface GuidedProgram {
+  fileName: string;
+  skeleton: readonly string[];
+  blocks: readonly { id: string; lines: readonly string[] }[];
+  solution: readonly string[];
+}
+
 export interface ManualSection {
   id: string;
   title: string;
@@ -38,7 +47,7 @@ export interface Chapter<State> {
   next?: { id?: number; title: string };
   cover?: { modules: readonly ModuleId[]; selected: ModuleId };
   workbench: { objects: readonly WorkbenchObjectId[] };
-  computer: { panels: readonly ComputerPanelId[]; source?: GuidedSource; editorHint?: string; datasheetSection?: DatasheetSectionId };
+  computer: { panels: readonly ComputerPanelId[]; source?: GuidedSource; program?: GuidedProgram; editorHint?: string; datasheetSection?: DatasheetSectionId };
   manual: readonly ManualSection[];
   quiz: readonly QuizQuestion[];
   createInitialState: () => State;
